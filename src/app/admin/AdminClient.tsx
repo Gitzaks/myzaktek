@@ -73,33 +73,61 @@ function FileSection({
   const [year, setYear] = useState(currentYear);
   const [month, setMonth] = useState(currentMonth);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [error, setError] = useState("");
 
   async function handleUpload() {
     if (!selectedFile) return;
     setUploading(true);
+    setUploadProgress("");
     setError("");
-    const form = new FormData();
-    form.append("file", selectedFile);
-    form.append("fileType", fileType);
-    if (hasYearMonth) {
-      form.append("year", String(year));
-      form.append("month", String(month));
-    }
+
+    const CHUNK_SIZE = 1 * 1024 * 1024; // 1 MB per chunk
+    const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+    const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     try {
-      const res = await fetch("/api/admin/files/upload", { method: "POST", body: form });
-      if (!res.ok) {
-        const d = await res.json();
-        setError(d.error ?? "Upload failed");
-      } else {
-        setSelectedFile(null);
-        onRefresh();
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        if (totalChunks > 1) setUploadProgress(`${chunkIndex + 1}/${totalChunks}`);
+
+        const start = chunkIndex * CHUNK_SIZE;
+        const chunk = selectedFile.slice(start, Math.min(start + CHUNK_SIZE, selectedFile.size));
+
+        const form = new FormData();
+        form.append("chunk", chunk, selectedFile.name);
+        form.append("uploadId", uploadId);
+        form.append("chunkIndex", String(chunkIndex));
+        form.append("totalChunks", String(totalChunks));
+        form.append("fileType", fileType);
+        if (hasYearMonth) {
+          form.append("year", String(year));
+          form.append("month", String(month));
+        }
+
+        const res = await fetch("/api/admin/files", { method: "POST", body: form });
+        if (!res.ok) {
+          let errorMsg = `Upload failed (HTTP ${res.status})`;
+          try {
+            const d = await res.json();
+            errorMsg = d.error ?? errorMsg;
+          } catch {
+            const text = await res.text().catch(() => "");
+            errorMsg = `Upload failed (HTTP ${res.status}): ${text.slice(0, 200)}`;
+          }
+          setError(errorMsg);
+          setUploading(false);
+          setUploadProgress("");
+          return;
+        }
       }
-    } catch {
-      setError("Network error");
+      setSelectedFile(null);
+      onRefresh();
+    } catch (err) {
+      setError(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     }
     setUploading(false);
+    setUploadProgress("");
   }
 
   async function handleImport(fileId: string) {
@@ -143,7 +171,7 @@ function FileSection({
                 disabled={uploading}
                 className="bg-[#1565a8] text-white px-3 py-1 rounded text-sm hover:bg-[#0f4f8a] disabled:opacity-50"
               >
-                {uploading ? "Uploading…" : "Upload"}
+                {uploading ? (uploadProgress ? `Uploading… (${uploadProgress})` : "Uploading…") : "Upload"}
               </button>
             </>
           )}
