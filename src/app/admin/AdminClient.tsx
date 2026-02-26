@@ -11,6 +11,7 @@ interface ImportFile {
   status: ImportStatus;
   year?: number;
   month?: number;
+  recordsTotal?: number;
   recordsImported?: number;
   errorMessage?: string;
   createdAt: string;
@@ -73,33 +74,62 @@ function FileSection({
   const [year, setYear] = useState(currentYear);
   const [month, setMonth] = useState(currentMonth);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [error, setError] = useState("");
 
   async function handleUpload() {
     if (!selectedFile) return;
     setUploading(true);
+    setUploadProgress("");
     setError("");
-    const form = new FormData();
-    form.append("file", selectedFile);
-    form.append("fileType", fileType);
-    if (hasYearMonth) {
-      form.append("year", String(year));
-      form.append("month", String(month));
-    }
+
+    const CHUNK_SIZE = 1 * 1024 * 1024; // 1 MB per chunk
+    const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+    const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     try {
-      const res = await fetch("/api/admin/files/upload", { method: "POST", body: form });
-      if (!res.ok) {
-        const d = await res.json();
-        setError(d.error ?? "Upload failed");
-      } else {
-        setSelectedFile(null);
-        onRefresh();
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        setUploadProgress(`${chunkIndex + 1}/${totalChunks}`);
+
+        const start = chunkIndex * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
+        const chunkBlob = selectedFile.slice(start, end); // lazy slice — only this 1MB is sent
+
+        const form = new FormData();
+        form.append("chunk", chunkBlob, selectedFile.name);
+        form.append("uploadId", uploadId);
+        form.append("chunkIndex", String(chunkIndex));
+        form.append("totalChunks", String(totalChunks));
+        form.append("fileType", fileType);
+        if (hasYearMonth) {
+          form.append("year", String(year));
+          form.append("month", String(month));
+        }
+
+        const res = await fetch("/api/admin/files", { method: "POST", body: form });
+        if (!res.ok) {
+          let errorMsg = `Chunk ${chunkIndex + 1}/${totalChunks} failed (HTTP ${res.status})`;
+          try {
+            const d = await res.json();
+            errorMsg = d.error ?? errorMsg;
+          } catch {
+            const text = await res.text().catch(() => "");
+            errorMsg = `Chunk ${chunkIndex + 1}/${totalChunks} failed (HTTP ${res.status}): ${text.slice(0, 200)}`;
+          }
+          setError(errorMsg);
+          setUploading(false);
+          setUploadProgress("");
+          return;
+        }
       }
-    } catch {
-      setError("Network error");
+      setSelectedFile(null);
+      onRefresh();
+    } catch (err) {
+      setError(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     }
     setUploading(false);
+    setUploadProgress("");
   }
 
   async function handleImport(fileId: string) {
@@ -137,13 +167,20 @@ function FileSection({
           </label>
           {selectedFile && (
             <>
-              <span className="text-gray-700 font-medium">{selectedFile.name}</span>
+              <span className="text-gray-700 font-medium">
+                {selectedFile.name}{" "}
+                <span className="text-xs text-gray-400">
+                  ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB,{" "}
+                  {Math.ceil(selectedFile.size / (1 * 1024 * 1024))} chunk
+                  {Math.ceil(selectedFile.size / (1 * 1024 * 1024)) !== 1 ? "s" : ""})
+                </span>
+              </span>
               <button
                 onClick={handleUpload}
                 disabled={uploading}
                 className="bg-[#1565a8] text-white px-3 py-1 rounded text-sm hover:bg-[#0f4f8a] disabled:opacity-50"
               >
-                {uploading ? "Uploading…" : "Upload"}
+                {uploading ? (uploadProgress ? `Uploading… (${uploadProgress})` : "Uploading…") : "Upload"}
               </button>
             </>
           )}
@@ -174,9 +211,11 @@ function FileSection({
                       f.status === "processing" ? "text-blue-600" :
                       "text-gray-400"
                     }>
-                      {f.status === "imported" ? "Imported" :
-                       f.status === "import_failed" ? "Import Failed" :
-                       f.status === "processing" ? "Processing…" : "Pending"}
+                      {f.status === "imported"
+                        ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
+                        : f.status === "import_failed" ? "Import Failed"
+                        : f.status === "processing" ? "Processing…"
+                        : "Pending"}
                     </span>
                     {f.errorMessage && (
                       <div className="text-xs text-red-400 mt-0.5">{f.errorMessage}</div>

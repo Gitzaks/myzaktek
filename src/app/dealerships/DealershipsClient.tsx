@@ -13,7 +13,7 @@ interface DealerRow {
   dealerCode: string;
 }
 
-export default function DealershipsClient() {
+export default function DealershipsClient({ lastUpdate }: { lastUpdate?: string }) {
   const [tab, setTab] = useState<"list" | "search">("list");
   const [rows, setRows] = useState<DealerRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -53,7 +53,7 @@ export default function DealershipsClient() {
     <div>
       {/* Stats Bar — shows global totals for admin */}
       <StatsBar remindersThisMonth={0} monthlySales={0} />
-      <DataNote lastUpdate="02/03/2026" />
+      <DataNote lastUpdate={lastUpdate} />
 
       <div className="p-6">
         {/* Active Users + Tabs */}

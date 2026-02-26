@@ -3,6 +3,8 @@ import Dealer from "@/models/Dealer";
 import User from "@/models/User";
 import Contract from "@/models/Contract";
 import Vehicle from "@/models/Vehicle";
+import ServiceRecord from "@/models/ServiceRecord";
+import { getApplicationSchedule } from "@/lib/schedule";
 import type { ImportResult } from "./index";
 
 /**
@@ -112,7 +114,7 @@ export async function importContracts(
       const purchaseDate = parseDate(row.contract_purchase_date) ?? new Date();
       const expirationDate = parseDate(row.expiration_date) ?? new Date();
 
-      await Contract.findOneAndUpdate(
+      const contract = await Contract.findOneAndUpdate(
         { agreementId },
         {
           $set: {
@@ -127,10 +129,36 @@ export async function importContracts(
           },
           $setOnInsert: { homeKit: false },
         },
-        { upsert: true }
+        { upsert: true, new: true }
       );
 
-      // ── 4. Upsert Vehicle ──────────────────────────────────────────────
+      // ── 4. Upsert ServiceRecords (bi-annual schedule) ──────────────────
+      if (status === "active" && contract) {
+        const coverageType = COVERAGE_TYPE[plan] ?? "exterior";
+        const scheduleDates = getApplicationSchedule(purchaseDate, expirationDate);
+        if (scheduleDates.length > 0) {
+          const ops = scheduleDates.map((scheduledDate) => ({
+            updateOne: {
+              filter: { contractId: contract._id, scheduledDate },
+              update: {
+                $setOnInsert: {
+                  contractId: contract._id,
+                  customerId: customer._id,
+                  dealerId: dealer._id,
+                  type: coverageType,
+                  status: "scheduled",
+                  scheduledDate,
+                  reminderSent: false,
+                },
+              },
+              upsert: true,
+            },
+          }));
+          await ServiceRecord.bulkWrite(ops, { ordered: false });
+        }
+      }
+
+      // ── 5. Upsert Vehicle ──────────────────────────────────────────────
       const vin = row.vin?.trim().toUpperCase();
       if (vin) {
         const vehicleYear = parseInt(row.vehicle_year ?? "0", 10) || 0;
