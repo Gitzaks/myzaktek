@@ -27,6 +27,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  console.log("[upload] content-length:", req.headers.get("content-length"), "bytes");
   try {
     const session = await auth();
     if (session?.user?.role !== "admin") {

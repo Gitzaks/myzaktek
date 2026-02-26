@@ -23,7 +23,17 @@ export async function runImport(importFile: IImportFileDocument): Promise<Import
     skipEmptyLines: true,
   }) as Papa.ParseResult<Record<string, string>>;
 
-  const rows = parsed.data;
+  // Normalize all column headers to lowercase_underscore so importers
+  // work regardless of whether the CSV uses "Dealer Code", "dealer_code",
+  // "DEALER_CODE", etc.
+  const rows = parsed.data.map((row) => {
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(row)) {
+      const k = key.trim().toLowerCase().replace(/[\s\-]+/g, "_");
+      normalized[k] = value as string;
+    }
+    return normalized;
+  });
 
   switch (importFile.fileType) {
     case "contracts":

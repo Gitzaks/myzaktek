@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
 
   const [contracts, total] = await Promise.all([
     Contract.find(contractQuery)
-      .populate("customerId", "name email phone")
+      .populate("customerId", "name email phone address city state zip")
       .populate("dealerId", "name")
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -66,13 +66,15 @@ export async function GET(req: NextRequest) {
   ]);
 
   const rows = contracts.map((c) => {
-    const customer = c.customerId as { name?: string; email?: string; phone?: string } | null;
+    const customer = c.customerId as { name?: string; email?: string; phone?: string; address?: string; city?: string; state?: string; zip?: string } | null;
     const dealer = c.dealerId as { name?: string } | null;
+    const addrParts = [customer?.address, customer?.city, customer?.state].filter(Boolean);
     return {
       _id: c._id,
       agreementId: c.agreementId,
       customerName: customer?.name ?? "",
       customerPhone: customer?.phone ?? "",
+      customerAddress: addrParts.join(", "),
       dealerName: dealer?.name ?? "",
       plan: c.plan,
       beginsAt: c.beginsAt,

@@ -3,6 +3,7 @@ import DashboardClient from "./DashboardClient";
 import { connectDB } from "@/lib/mongodb";
 import Contract from "@/models/Contract";
 import ServiceRecord from "@/models/ServiceRecord";
+import ImportFile from "@/models/ImportFile";
 
 async function getDashboardStats(role: string, dealerIds: string[], regionId?: string) {
   await connectDB();
@@ -26,7 +27,7 @@ async function getDashboardStats(role: string, dealerIds: string[], regionId?: s
     ServiceRecord.countDocuments(serviceFilter),
     Contract.countDocuments({
       ...contractFilter,
-      createdAt: { $gte: startOfMonth },
+      purchaseDate: { $gte: startOfMonth },
     }),
   ]);
 
@@ -36,17 +37,21 @@ async function getDashboardStats(role: string, dealerIds: string[], regionId?: s
 export default async function DashboardPage() {
   const session = await requireAuth(["admin", "dealer", "regional"]);
 
-  const stats = await getDashboardStats(
-    session.user.role,
-    session.user.dealerIds,
-    session.user.regionId
-  );
+  const [stats, lastImport] = await Promise.all([
+    getDashboardStats(session.user.role, session.user.dealerIds, session.user.regionId),
+    ImportFile.findOne({ status: "imported" }).sort({ updatedAt: -1 }).select("updatedAt").lean(),
+  ]);
+
+  const lastUpdate = lastImport
+    ? new Date(lastImport.updatedAt).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+    : undefined;
 
   return (
     <DashboardClient
       initialStats={stats}
       userRole={session.user.role}
       userDealerIds={session.user.dealerIds}
+      lastUpdate={lastUpdate}
     />
   );
 }

@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     }),
     Contract.countDocuments({
       dealerId,
-      createdAt: {
+      purchaseDate: {
         $gte: new Date(currentYear, new Date().getMonth(), 1),
       },
     }),

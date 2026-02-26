@@ -21,12 +21,13 @@ interface Props {
   initialStats: { activeCustomers: number; remindersThisMonth: number; monthlySales: number };
   userRole: UserRole;
   userDealerIds: string[];
+  lastUpdate?: string;
 }
 
 const PLANS = ["All Plans", "Basic", "Basic with Interior", "Ultimate"];
 const PER_PAGE_OPTIONS = [10, 25, 50, 100];
 
-export default function DashboardClient({ initialStats, userRole, userDealerIds }: Props) {
+export default function DashboardClient({ initialStats, userRole, userDealerIds, lastUpdate }: Props) {
   const [tab, setTab] = useState<"list" | "search">("list");
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -100,7 +101,7 @@ export default function DashboardClient({ initialStats, userRole, userDealerIds 
       />
 
       {/* Data Note */}
-      <DataNote lastUpdate="02/03/2026" />
+      <DataNote lastUpdate={lastUpdate} />
 
       <div className="p-6">
         {/* Active Customers + Tabs */}

@@ -69,6 +69,15 @@ export default function NavBar({ userName, role }: NavBarProps) {
               <Link href="/stats" className="hover:underline flex items-center gap-1">
                 <span>$</span> Stats
               </Link>
+
+              {role === "admin" && (
+                <>
+                  <span className="text-white/50 mx-1">|</span>
+                  <Link href="/admin" className="hover:underline flex items-center gap-1">
+                    <span>⚙️</span> Admin
+                  </Link>
+                </>
+              )}
             </>
           )}
 
