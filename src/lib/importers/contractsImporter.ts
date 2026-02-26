@@ -146,7 +146,7 @@ export async function importContracts(
                   customerId: customer._id,
                   dealerId: dealer._id,
                   type: coverageType,
-                  status: "scheduled",
+                  status: "scheduled" as const,
                   scheduledDate,
                   reminderSent: false,
                 },

@@ -5,13 +5,6 @@ import ImportFile from "@/models/ImportFile";
 import { writeFile, mkdir, readFile, appendFile, rm } from "fs/promises";
 import { join } from "path";
 
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: "250mb",
-    },
-  },
-};
 
 const UPLOAD_DIR = join(process.cwd(), "uploads");
 
