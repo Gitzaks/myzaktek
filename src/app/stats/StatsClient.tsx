@@ -30,8 +30,12 @@ function fmt(n: number) { return n.toLocaleString(); }
 function fmtUSD(n: number) { return "$" + n.toLocaleString(); }
 function fmtPct(n: number) { return n + "%"; }
 
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - i);
+
 export default function StatsClient({ dealers, isAdmin }: Props) {
   const [selectedDealerId, setSelectedDealerId] = useState(dealers[0]?._id ?? "");
+  const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [monthly, setMonthly] = useState<MonthlyStat[]>([]);
   const [loading, setLoading] = useState(false);
@@ -41,14 +45,14 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
   useEffect(() => {
     if (!selectedDealerId) return;
     setLoading(true);
-    fetch(`/api/stats?dealerId=${selectedDealerId}`)
+    fetch(`/api/stats?dealerId=${selectedDealerId}&year=${selectedYear}`)
       .then((r) => r.json())
       .then((data) => {
         setSummary(data.summary);
         setMonthly(data.monthly ?? []);
       })
       .finally(() => setLoading(false));
-  }, [selectedDealerId]);
+  }, [selectedDealerId, selectedYear]);
 
   // Build chart data arrays (12 months)
   function buildChartData(key: string) {
@@ -108,9 +112,6 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
         </div>
 
         <div className="flex items-center gap-4">
-          <a href="/liability-calculator" className="text-[#1565a8] font-bold italic text-lg hover:underline">
-            View Liability Calculator
-          </a>
           {selectedDealer?.logoUrl ? (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
@@ -127,7 +128,7 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
         </div>
       </div>
 
-      {/* Dealer selector — compact dropdown matching reference design */}
+      {/* Dealer + Year selectors */}
       <div className="bg-gray-100 border-b border-gray-200 px-8 py-2 flex items-center gap-2">
         <select
           value={selectedDealerId}
@@ -139,6 +140,17 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
           ))}
         </select>
         <span className="text-sm font-semibold text-gray-500">Dealers</span>
+        <span className="text-gray-300 mx-1">|</span>
+        <select
+          value={selectedYear}
+          onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+          className="border border-gray-300 rounded px-3 py-1.5 text-sm font-semibold text-gray-700 focus:outline-none focus:border-[#1565a8] bg-white"
+        >
+          {YEAR_OPTIONS.map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+        <span className="text-sm font-semibold text-gray-500">Year</span>
       </div>
 
       {loading ? (
@@ -332,7 +344,7 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
                       <th className="px-3 py-2 text-left font-semibold">Stat</th>
                       <th className="px-3 py-2 text-left font-semibold">Source</th>
                       {MONTHS.map((m) => (
-                        <th key={m} className="px-3 py-2 text-right font-semibold">{m} &apos;{String(new Date().getFullYear()).slice(2)}</th>
+                        <th key={m} className="px-3 py-2 text-right font-semibold">{m} &apos;{String(selectedYear).slice(2)}</th>
                       ))}
                     </tr>
                   </thead>

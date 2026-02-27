@@ -5,10 +5,12 @@ import type { ImportResult } from "./index";
  * Dealer Master CSV — columns:
  *   dealer_code, combine_with, zie_dealer, units_dealer,
  *   billing_dealer, dme_dealer, zakcntrcts_dealer
+ *   address, city, state, zip, phone  (optional — updated when present)
  *
  * Upserts dealers by dealer_code, storing per-report name aliases so that
  * other importers can do exact lookups instead of fragile fuzzy matching.
- * Does not overwrite address/phone fields already set on existing records.
+ * Address/phone fields are updated whenever non-empty values are present in
+ * the CSV, so re-importing the Dealer List will keep them current.
  */
 export async function importDealers(
   rows: Record<string, string>[]
@@ -29,6 +31,13 @@ export async function importDealers(
       const dmeDealer        = (row["dme_dealer"]        ?? "").trim() || undefined;
       const zakCntrtsDealer  = (row["zakcntrcts_dealer"] ?? "").trim() || undefined;
 
+      // Contact/location columns — update existing records when present in CSV
+      const address = (row["address"] ?? "").trim() || undefined;
+      const city    = (row["city"]    ?? "").trim() || undefined;
+      const state   = (row["state"]   ?? "").trim() || undefined;
+      const zip     = (row["zip"]     ?? row["zip_code"] ?? row["zipcode"] ?? "").trim() || undefined;
+      const phone   = (row["phone"]   ?? row["phone_number"] ?? "").trim() || undefined;
+
       // Name priority: explicit dealer_name column > zakcntrcts_dealer column > preserve existing.
       // Using zakCntrtsDealer as the default source means a plain re-import of the
       // Dealer Master file is enough to repair names that were previously set to dealerCode.
@@ -47,16 +56,23 @@ export async function importDealers(
             ...(billingDealer   !== undefined && { billingDealer }),
             ...(dmeDealer       !== undefined && { dmeDealer }),
             ...(zakCntrtsDealer !== undefined && { zakCntrtsDealer }),
+            // Contact fields — only overwrite when the CSV has a non-empty value
+            ...(address !== undefined && { address }),
+            ...(city    !== undefined && { city }),
+            ...(state   !== undefined && { state }),
+            ...(zip     !== undefined && { zip }),
+            ...(phone   !== undefined && { phone }),
           },
           $setOnInsert: {
             // For brand-new records only: use best name or fall back to dealerCode
             ...(bestName ? {} : { name: dealerCode }),
             email: `${dealerCode.toLowerCase()}@dealers.zaktek.com`,
-            address: "",
-            city: "",
-            state: "",
-            zip: "",
-            phone: "",
+            // Defaults for required fields not provided in this row
+            ...(address === undefined && { address: "" }),
+            ...(city    === undefined && { city: "" }),
+            ...(state   === undefined && { state: "" }),
+            ...(zip     === undefined && { zip: "" }),
+            ...(phone   === undefined && { phone: "" }),
             active: true,
           },
         },

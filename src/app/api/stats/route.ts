@@ -16,6 +16,9 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const dealerId = searchParams.get("dealerId");
+  const currentYear = new Date().getFullYear();
+  const yearParam = searchParams.get("year");
+  const year = yearParam ? parseInt(yearParam) : currentYear;
 
   // Enforce dealer-scoped access
   if (session.user.role === "dealer" && dealerId && !session.user.dealerIds.includes(dealerId)) {
@@ -26,11 +29,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "dealerId is required" }, { status: 400 });
   }
 
-  // Get current year's monthly stats
-  const currentYear = new Date().getFullYear();
-
   const [monthlyStats, activeCustomers, remindersThisMonth, monthlySales] = await Promise.all([
-    DealerMonthlyStats.find({ dealerId, year: currentYear }).sort({ month: 1 }).lean(),
+    DealerMonthlyStats.find({ dealerId, year }).sort({ month: 1 }).lean(),
     Contract.countDocuments({ dealerId, status: "active" }),
     ServiceRecord.countDocuments({
       dealerId,
