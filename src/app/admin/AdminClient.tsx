@@ -26,37 +26,21 @@ interface AutoPointExport {
 }
 
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const currentYear = new Date().getFullYear();
-const currentMonth = new Date().getMonth() + 1;
 
-function YearMonthPicker({
-  year, month, onChange,
-}: {
-  year: number; month: number;
-  onChange: (y: number, m: number) => void;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1 text-sm">
-      <select
-        value={year}
-        onChange={(e) => onChange(Number(e.target.value), month)}
-        className="border border-gray-300 rounded px-1 py-0.5 text-xs"
-      >
-        {[currentYear - 1, currentYear, currentYear + 1].map((y) => (
-          <option key={y} value={y}>{y}</option>
-        ))}
-      </select>
-      <select
-        value={month}
-        onChange={(e) => onChange(year, Number(e.target.value))}
-        className="border border-gray-300 rounded px-1 py-0.5 text-xs"
-      >
-        {MONTH_NAMES.map((m, i) => (
-          <option key={i + 1} value={i + 1}>{m}</option>
-        ))}
-      </select>
-    </span>
-  );
+function parseYearMonthFromFilename(filename: string): { year: number; month: number } | null {
+  // Try YYYY-MM or YYYY_MM (e.g. 2025-01, 2025_01)
+  let m = filename.match(/(\d{4})[-_](\d{2})/);
+  if (m) {
+    const year = parseInt(m[1]), month = parseInt(m[2]);
+    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12) return { year, month };
+  }
+  // Try standalone YYYYMM not surrounded by more digits (e.g. 202501)
+  m = filename.match(/(?<!\d)(\d{4})(\d{2})(?!\d)/);
+  if (m) {
+    const year = parseInt(m[1]), month = parseInt(m[2]);
+    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12) return { year, month };
+  }
+  return null;
 }
 
 function FileSection({
@@ -72,8 +56,7 @@ function FileSection({
   files: ImportFile[];
   onRefresh: () => void;
 }) {
-  const [year, setYear] = useState(currentYear);
-  const [month, setMonth] = useState(currentMonth);
+  const [parsedDate, setParsedDate] = useState<{ year: number; month: number } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -82,6 +65,10 @@ function FileSection({
 
   async function handleUpload() {
     if (!selectedFile) return;
+    if (hasYearMonth && !parsedDate) {
+      setError("Could not detect month/year from filename. Rename the file to include YYYYMM (e.g. FILE_202501.csv).");
+      return;
+    }
     setUploading(true);
     setUploadProgress("");
     setError("");
@@ -131,9 +118,9 @@ function FileSection({
       finalizeForm.append("finalize", "true");
       finalizeForm.append("filename", selectedFile.name);
       finalizeForm.append("fileType", fileType);
-      if (hasYearMonth) {
-        finalizeForm.append("year", String(year));
-        finalizeForm.append("month", String(month));
+      if (hasYearMonth && parsedDate) {
+        finalizeForm.append("year", String(parsedDate.year));
+        finalizeForm.append("month", String(parsedDate.month));
       }
 
       const finalizeRes = await fetch("/api/admin/files", { method: "POST", body: finalizeForm });
@@ -195,9 +182,12 @@ function FileSection({
         <p className="font-semibold text-gray-700 mb-2">
           Upload {hasYearMonth ? "a" : "an"} {title.replace(" Files", "")} file
         </p>
-        {hasYearMonth && (
-          <div className="mb-2">
-            <YearMonthPicker year={year} month={month} onChange={(y, m) => { setYear(y); setMonth(m); }} />
+        {hasYearMonth && selectedFile && (
+          <div className="mb-2 text-xs">
+            {parsedDate
+              ? <span className="text-green-700">Detected: {MONTH_NAMES[parsedDate.month - 1]} {parsedDate.year}</span>
+              : <span className="text-red-600">Could not detect month/year — rename file to include YYYYMM (e.g. FILE_202501.csv)</span>
+            }
           </div>
         )}
         <div className="flex items-center gap-3 text-sm text-gray-500 mb-2">
@@ -208,7 +198,14 @@ function FileSection({
               type="file"
               accept=".csv,.xlsx"
               className="hidden"
-              onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                setSelectedFile(f);
+                if (f && hasYearMonth) {
+                  setParsedDate(parseYearMonthFromFilename(f.name));
+                  setError("");
+                }
+              }}
             />
           </label>
           {selectedFile && (
