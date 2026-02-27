@@ -6,12 +6,12 @@ import Dealer from "@/models/Dealer";
 /**
  * POST /api/admin/migrate/fix-dealer-names
  *
- * One-time migration: for every Dealer whose `name` field equals its
- * `dealerCode` (e.g. "ZAK0605"), replace `name` with the `zakCntrtsDealer`
- * value (the human-readable name from the ZAKCNTRCTS report).
+ * Finds every Dealer whose `name` equals its `dealerCode` (e.g. "ZAK0605")
+ * and replaces it with the best available human-readable name, trying fields
+ * in priority order: zakCntrtsDealer → billingDealer → dmeDealer → zieDealer → unitsDealer.
  *
- * Safe to run multiple times — only touches records that still have a
- * dealer-code-style name AND have a zakCntrtsDealer value to replace it with.
+ * Safe to run multiple times. Re-import your Contracts file first so that
+ * zakCntrtsDealer is populated, then click this button.
  */
 export async function POST() {
   const session = await auth();
@@ -21,27 +21,52 @@ export async function POST() {
 
   await connectDB();
 
-  // Find every dealer whose name still looks like a dealer code
+  // All dealers still using their code as their display name
   const broken = await Dealer.find({
     $expr: { $eq: ["$name", "$dealerCode"] },
-    zakCntrtsDealer: { $exists: true, $ne: "" },
   }).lean();
 
   if (broken.length === 0) {
     return NextResponse.json({ fixed: 0, message: "No dealer names need fixing." });
   }
 
-  const bulkOps = broken.map((d) => ({
-    updateOne: {
-      filter: { _id: d._id },
-      update: { $set: { name: d.zakCntrtsDealer } },
-    },
-  }));
+  const bulkOps = broken
+    .map((d) => {
+      // Try each name-bearing field in priority order; skip if it's also just the code
+      const bestName =
+        (d.zakCntrtsDealer && d.zakCntrtsDealer !== d.dealerCode ? d.zakCntrtsDealer : null) ??
+        (d.billingDealer   && d.billingDealer   !== d.dealerCode ? d.billingDealer   : null) ??
+        (d.dmeDealer       && d.dmeDealer       !== d.dealerCode ? d.dmeDealer       : null) ??
+        (d.zieDealer       && d.zieDealer       !== d.dealerCode ? d.zieDealer       : null) ??
+        (d.unitsDealer     && d.unitsDealer     !== d.dealerCode ? d.unitsDealer     : null) ??
+        null;
 
-  await Dealer.bulkWrite(bulkOps);
+      if (!bestName) return null;
 
+      return {
+        updateOne: {
+          filter: { _id: d._id },
+          update: { $set: { name: bestName } },
+        },
+      };
+    })
+    .filter(Boolean);
+
+  if (bulkOps.length === 0) {
+    return NextResponse.json({
+      fixed: 0,
+      skipped: broken.length,
+      message: `${broken.length} dealer(s) still need a name, but no replacement is available yet. Re-import your Contracts file, then run this again.`,
+    });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await Dealer.bulkWrite(bulkOps as any[]);
+
+  const skipped = broken.length - bulkOps.length;
   return NextResponse.json({
-    fixed: broken.length,
-    message: `Updated ${broken.length} dealer name${broken.length !== 1 ? "s" : ""}.`,
+    fixed: bulkOps.length,
+    skipped,
+    message: `Updated ${bulkOps.length} dealer name${bulkOps.length !== 1 ? "s" : ""}${skipped > 0 ? ` (${skipped} still need a contracts re-import)` : ""}.`,
   });
 }

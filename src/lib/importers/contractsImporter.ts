@@ -87,26 +87,41 @@ export async function importContracts(
     if (code && !dealerRowMap.has(code)) dealerRowMap.set(code, row);
   }
 
-  const dealerOps = [...dealerRowMap.entries()].map(([code, row]) => ({
-    updateOne: {
-      filter: { dealerCode: code },
-      update: {
-        $set: {
-          name: row.dealer_name?.trim(),
-          address: row.dealer_address_1?.trim() || undefined,
-          city: row.dealer_city?.trim(),
-          state: row.dealer_state?.trim(),
-          zip: row.dealer_zip_code?.trim(),
-          dealerCode: code,
+  const dealerOps = [...dealerRowMap.entries()].map(([code, row]) => {
+    // Extract non-empty values; undefined values are excluded from $set by Mongoose
+    const dealerName  = row.dealer_name?.trim()  || undefined;
+    const dealerPhone = (row.dealer_phone ?? row.dealer_phone_number ?? "").trim() || undefined;
+    const dealerAddr  = row.dealer_address_1?.trim() || undefined;
+    const dealerCity  = row.dealer_city?.trim()  || undefined;
+    const dealerState = row.dealer_state?.trim() || undefined;
+    const dealerZip   = row.dealer_zip_code?.trim() || undefined;
+
+    return {
+      updateOne: {
+        filter: { dealerCode: code },
+        update: {
+          $set: {
+            dealerCode: code,
+            // Only set name/zakCntrtsDealer when the CSV actually has a value —
+            // prevents overwriting a good name with undefined or an empty string.
+            ...(dealerName  && { name: dealerName, zakCntrtsDealer: dealerName }),
+            ...(dealerAddr  && { address: dealerAddr }),
+            ...(dealerCity  && { city: dealerCity }),
+            ...(dealerState && { state: dealerState }),
+            ...(dealerZip   && { zip: dealerZip }),
+            ...(dealerPhone && { phone: dealerPhone }),
+          },
+          $setOnInsert: {
+            email: `${code.toLowerCase()}@dealers.zaktek.com`,
+            active: true,
+            // For brand-new dealers only: fall back to code when name is missing
+            ...(dealerName ? {} : { name: code }),
+          },
         },
-        $setOnInsert: {
-          email: `${code.toLowerCase()}@dealers.zaktek.com`,
-          active: true,
-        },
+        upsert: true,
       },
-      upsert: true,
-    },
-  }));
+    };
+  });
 
   try {
     await bulkWrite(Dealer, dealerOps);
