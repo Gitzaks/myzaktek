@@ -21,6 +21,15 @@ export async function POST(
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 
+  // Chunked uploads are not retained after the initial import — file data is
+  // processed in-memory and discarded. Re-import requires re-uploading the file.
+  if (!importFile.fileData && importFile.storagePath?.startsWith("mongodb-chunk:")) {
+    return NextResponse.json(
+      { error: "Re-import is not available for this file — please upload it again." },
+      { status: 400 }
+    );
+  }
+
   // Mark as processing
   importFile.status = "processing";
   await importFile.save();
