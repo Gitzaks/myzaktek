@@ -226,6 +226,8 @@ export async function importContracts(
             beginsAt: purchaseDate,
             endsAt: expirationDate,
             purchaseDate,
+            ...(row.sale_price?.trim()     && { salePrice:     parseFloat(row.sale_price)     || undefined }),
+            ...(row.internal_cost?.trim()  && { internalCost:  parseFloat(row.internal_cost)  || undefined }),
           },
           $setOnInsert: { homeKit: false },
         },

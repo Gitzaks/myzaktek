@@ -20,6 +20,8 @@ export interface IContractDocument extends Document {
   maxMileage?: number;        // Expiration mileage e.g. 100000
   beginMileage?: number;      // Odometer at time of purchase
   deductible?: number;        // Deductible amount (default 0)
+  salePrice?: number;         // Gross sale price from ZAKCNTRCTS
+  internalCost?: number;      // Internal cost from ZAKCNTRCTS
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,6 +51,8 @@ const ContractSchema = new Schema<IContractDocument>(
     maxMileage: { type: Number },
     beginMileage: { type: Number },
     deductible: { type: Number, default: 0 },
+    salePrice: { type: Number },
+    internalCost: { type: Number },
   },
   { timestamps: true }
 );

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import mongoose from "mongoose";
 import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
 import DealerMonthlyStats from "@/models/DealerMonthlyStats";
@@ -29,7 +30,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "dealerId is required" }, { status: 400 });
   }
 
-  const [monthlyStats, activeCustomers, remindersThisMonth, monthlySales] = await Promise.all([
+  const dealerObjId = new mongoose.Types.ObjectId(dealerId);
+
+  const [monthlyStats, activeCustomers, remindersThisMonth, monthlySales, contractPriceAgg] = await Promise.all([
     DealerMonthlyStats.find({ dealerId, year }).sort({ month: 1 }).lean(),
     Contract.countDocuments({ dealerId, status: "active" }),
     ServiceRecord.countDocuments({
@@ -45,6 +48,21 @@ export async function GET(req: NextRequest) {
         $gte: new Date(currentYear, new Date().getMonth(), 1),
       },
     }),
+    Contract.aggregate<{ avgSalePrice: number; avgInternalCost: number }>([
+      {
+        $match: {
+          dealerId: dealerObjId,
+          purchaseDate: { $gte: new Date(year, 0, 1), $lt: new Date(year + 1, 0, 1) },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          avgSalePrice:    { $avg: { $cond: [{ $gt: ["$salePrice",    0] }, "$salePrice",    null] } },
+          avgInternalCost: { $avg: { $cond: [{ $gt: ["$internalCost", 0] }, "$internalCost", null] } },
+        },
+      },
+    ]),
   ]);
 
   // Aggregate YTD totals from monthly stats
@@ -63,8 +81,8 @@ export async function GET(req: NextRequest) {
     { totalRevenue: 0, exteriorUnits: 0, interiorUnits: 0, newUnits: 0, ROs: 0, fixedOpsRevenue: 0, list: 0, response: 0 }
   );
 
-  const avgRevenue =
-    ytd.exteriorUnits > 0 ? Math.round(ytd.totalRevenue / ytd.exteriorUnits) : 0;
+  const avgSalePrice    = Math.round(contractPriceAgg[0]?.avgSalePrice    ?? 0);
+  const avgInternalCost = Math.round(contractPriceAgg[0]?.avgInternalCost ?? 0);
   const responseRate =
     ytd.list > 0 ? Math.round((ytd.response / ytd.list) * 100) / 100 : 0;
   const avgROTotalPay =
@@ -83,7 +101,8 @@ export async function GET(req: NextRequest) {
       monthlySales,
       totalImpactYTD: ytd.totalRevenue,
       salesYTD: ytd.newUnits,
-      avgPerContract: avgRevenue,
+      avgPerContract: avgSalePrice,
+      avgInternalCost,
       contractRevenueYTD: ytd.totalRevenue,
       exteriorPenetration: exteriorPenetrationAvg,
       interiorPenetration: interiorPenetrationAvg,

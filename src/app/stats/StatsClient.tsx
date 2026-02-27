@@ -15,7 +15,7 @@ interface MonthlyStat {
 }
 interface Summary {
   activeCustomers: number; remindersThisMonth: number; monthlySales: number;
-  totalImpactYTD: number; salesYTD: number; avgPerContract: number;
+  totalImpactYTD: number; salesYTD: number; avgPerContract: number; avgInternalCost: number;
   contractRevenueYTD: number; exteriorPenetration: number; interiorPenetration: number;
   ROsYTD: number; avgROPay: number; totalRORevenueYTD: number; responseRate: number;
 }
@@ -185,7 +185,8 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
               <div className="grid grid-cols-5 border-b border-gray-200">
                 {[
                   { icon: "👥", label: "SALES", value: fmt(summary.salesYTD), sub: "New Sales YTD" },
-                  { icon: "📄", label: "$/UNIT CONTRACT", value: fmtUSD(summary.avgPerContract), sub: "$/Contract" },
+                  { icon: "💰", label: "AVG SALE PRICE", value: fmtUSD(summary.avgPerContract), sub: "Average Contract Sales Price" },
+                  { icon: "💲", label: "INTERNAL COST", value: fmtUSD(summary.avgInternalCost), sub: "Average Internal Cost" },
                   { icon: "📋", label: "CONTRACT REVENUE", value: fmtUSD(summary.contractRevenueYTD), sub: "Contract Revenue YTD", green: true },
                   { icon: "🚗", label: "PENETRATION", value: null, sub: null,
                     custom: (
@@ -217,7 +218,7 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
               <div className="grid grid-cols-5">
                 {[
                   { icon: "🔧", label: "ROs", value: fmt(summary.ROsYTD), sub: "ROs YTD" },
-                  { icon: "💰", label: "$/RO", value: fmtUSD(summary.avgROPay), sub: "GP/WY per RO" },
+                  { icon: "💰", label: "$/RO", value: fmtUSD(summary.avgROPay), sub: "Average Customer Pay + Warranty" },
                   { icon: "💵", label: "TOTAL REVENUE", value: fmtUSD(summary.totalRORevenueYTD), sub: "Total RO Revenue YTD", green: true },
                   { icon: "📈", label: "RESPONSE RATE", value: fmtPct(Math.round(summary.responseRate * 100)), sub: "% Response Rate" },
                 ].map((item, i) => (
