@@ -90,11 +90,17 @@ export async function importContracts(
   const dealerOps = [...dealerRowMap.entries()].map(([code, row]) => {
     // Extract non-empty values; undefined values are excluded from $set by Mongoose
     const dealerName  = row.dealer_name?.trim()  || undefined;
-    const dealerPhone = (row.dealer_phone ?? row.dealer_phone_number ?? "").trim() || undefined;
-    const dealerAddr  = row.dealer_address_1?.trim() || undefined;
-    const dealerCity  = row.dealer_city?.trim()  || undefined;
-    const dealerState = row.dealer_state?.trim() || undefined;
-    const dealerZip   = row.dealer_zip_code?.trim() || undefined;
+    const dealerPhone = (
+      row.dealer_phone ?? row.dealer_phone_number ?? row.phone_number ?? row.phone ?? ""
+    ).trim() || undefined;
+    const dealerAddr  = (
+      row.dealer_address_1 ?? row.dealer_address ?? row.address_1 ?? row.address ?? ""
+    ).trim() || undefined;
+    const dealerCity  = (row.dealer_city  ?? row.city  ?? "").trim() || undefined;
+    const dealerState = (row.dealer_state ?? row.state ?? "").trim() || undefined;
+    const dealerZip   = (
+      row.dealer_zip_code ?? row.dealer_zip ?? row.zip_code ?? row.zip ?? ""
+    ).trim() || undefined;
 
     return {
       updateOne: {
@@ -116,6 +122,13 @@ export async function importContracts(
             active: true,
             // For brand-new dealers only: fall back to code when name is missing
             ...(dealerName ? {} : { name: code }),
+            // Required schema fields — provide empty-string defaults for new records
+            // when the CSV doesn't carry these columns
+            ...(dealerAddr  === undefined && { address: "" }),
+            ...(dealerCity  === undefined && { city: "" }),
+            ...(dealerState === undefined && { state: "" }),
+            ...(dealerZip   === undefined && { zip: "" }),
+            ...(dealerPhone === undefined && { phone: "" }),
           },
         },
         upsert: true,
