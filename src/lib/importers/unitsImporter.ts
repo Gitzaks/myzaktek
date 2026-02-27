@@ -22,10 +22,16 @@ export async function importUnits(
     try {
       // Keys are normalized to lowercase by the CSV parser in index.ts
       const dealerName = row["dealership"]?.trim();
-      if (!dealerName) continue;
+      if (!dealerName) {
+        errors.push(`Row ${imported + errors.length + 1}: missing Dealership name`);
+        continue;
+      }
 
       const dealer = findDealerByName(allDealers, dealerName);
-      if (!dealer) continue;
+      if (!dealer) {
+        errors.push(`No dealer match for: "${dealerName}"`);
+        continue;
+      }
 
       const newUnits = parseNum(row["newunits"]);
       const usedUnits = parseNum(row["usedunits"]);
@@ -45,7 +51,7 @@ export async function importUnits(
 
       imported++;
     } catch (err) {
-      if (errors.length < 20) errors.push(`Row ${imported + errors.length + 1}: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`Row ${imported + errors.length + 1}: ${err instanceof Error ? err.message : String(err)}`);
       // skip bad row
     }
   }
