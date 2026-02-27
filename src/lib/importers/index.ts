@@ -32,6 +32,36 @@ function normalizeExcelSheet(ws: XLSX.WorkSheet): Record<string, string>[] {
   });
 }
 
+/**
+ * Like normalizeExcelSheet but scans the first 10 rows for the real header row.
+ * AutoPoint files have title/subtitle rows above the actual column headers, so
+ * we look for the first row containing a cell that starts with "dme".
+ */
+function normalizeAutoPointSheet(ws: XLSX.WorkSheet): Record<string, string>[] {
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
+
+  let headerIdx = 0;
+  for (let i = 0; i < Math.min(10, raw.length); i++) {
+    if ((raw[i] as unknown[]).some((c) => /^dme\b/i.test(String(c).trim()))) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  const headers = (raw[headerIdx] as unknown[]).map((h) =>
+    String(h).trim().toLowerCase().replace(/[\s\-]+/g, "_")
+  );
+
+  return raw
+    .slice(headerIdx + 1)
+    .filter((row) => (row as unknown[]).some((c) => String(c).trim() !== ""))
+    .map((row) => {
+      const out: Record<string, string> = {};
+      (row as unknown[]).forEach((cell, i) => { if (headers[i]) out[headers[i]] = String(cell); });
+      return out;
+    });
+}
+
 const MONTH_FULL  = ["january","february","march","april","may","june","july","august","september","october","november","december"];
 const MONTH_ABBR  = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
 
@@ -91,7 +121,7 @@ export async function runImport(
     for (const sheetName of wb.SheetNames) {
       const parsed = parseSheetDate(sheetName, importFile.year);
       if (!parsed) continue; // silently skip non-month tabs (e.g. "YTD Report")
-      const sheetRows = normalizeExcelSheet(wb.Sheets[sheetName]);
+      const sheetRows = normalizeAutoPointSheet(wb.Sheets[sheetName]);
       if (sheetRows.length === 0) continue;
       const result = await importAutoPoint(sheetRows, parsed.year, parsed.month);
       totalRecords  += result.recordsTotal;

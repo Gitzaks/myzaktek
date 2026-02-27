@@ -374,25 +374,26 @@ function FileSection({
   const [error, setError] = useState("");
   const [importingId, setImportingId] = useState<string | null>(null);
 
-  // Auto-poll every 2 s whenever any file in this section is processing
+  // Auto-poll every 2 s while any file is processing OR immediately after clicking Import
   const typeFiles = files.filter((f) => f.fileType === fileType);
   const anyProcessing = typeFiles.some((f) => f.status === "processing");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
-    if (anyProcessing) {
+    const shouldPoll = anyProcessing || importingId !== null;
+    if (shouldPoll) {
       if (!pollRef.current) {
         pollRef.current = setInterval(() => { onRefresh(); }, 2000);
       }
     } else {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-      // Clear local importing state once the server says it's no longer processing
-      if (importingId && typeFiles.some((f) => f._id === importingId && f.status !== "processing")) {
-        setImportingId(null);
-      }
+    }
+    // Clear importingId once the server confirms the file is no longer processing
+    if (importingId && typeFiles.some((f) => f._id === importingId && f.status !== "processing")) {
+      setImportingId(null);
     }
     return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [anyProcessing]);
+  }, [anyProcessing, importingId]);
 
   async function handleUpload() {
     if (!selectedFile) return;
@@ -498,8 +499,9 @@ function FileSection({
   async function handleImport(fileId: string) {
     setImportingId(fileId);
     await fetch(`/api/admin/files/${fileId}/import`, { method: "POST" });
-    // Route now returns 202 immediately; auto-poll effect takes over from here.
-    onRefresh();
+    // Route returns 202 immediately; await the first refresh so the UI shows
+    // "Processing…" right away, then the polling interval takes over.
+    await onRefresh();
   }
 
   async function handleReset(fileId: string) {
