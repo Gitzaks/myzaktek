@@ -26,7 +26,10 @@ export async function importBilling(
 
       // Extract numeric code from parentheses: "ABC Nissan (704)" → "ZAK0704"
       const match = billingName.match(/\((\d+)\)\s*$/);
-      if (!match) continue;
+      if (!match) {
+        errors.push(`No dealer code found in: "${billingName}"`);
+        continue;
+      }
       const dealerCode = "ZAK" + match[1].padStart(4, "0");
 
       const dealer = await Dealer.findOne({ dealerCode });
