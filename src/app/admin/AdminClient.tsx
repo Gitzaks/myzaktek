@@ -166,12 +166,12 @@ function FileSection({
           </div>
         )}
         <div className="flex items-center gap-3 text-sm text-gray-500 mb-2">
-          <span>You must select a single file with a *.csv extension</span>
+          <span>You must select a single .csv or .xlsx file</span>
           <label className="cursor-pointer border border-gray-300 rounded px-3 py-1 hover:bg-gray-50 text-gray-700">
             Select File
             <input
               type="file"
-              accept=".csv"
+              accept=".csv,.xlsx"
               className="hidden"
               onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
             />

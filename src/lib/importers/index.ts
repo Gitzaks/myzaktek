@@ -1,5 +1,6 @@
 import { readFile } from "fs/promises";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import type { IImportFileDocument } from "@/models/ImportFile";
 import { importMPP } from "./mppImporter";
 import { importUnits } from "./unitsImporter";
@@ -18,26 +19,37 @@ export interface ImportResult {
 export async function runImport(importFile: IImportFileDocument, inMemoryBuffer?: Buffer): Promise<ImportResult> {
   // Use the provided buffer, then the persisted fileData, then fall back to reading from disk
   const buffer = inMemoryBuffer ?? (importFile.fileData ? Buffer.from(importFile.fileData) : await readFile(importFile.storagePath));
-  // Strip UTF-8 BOM if present — common in Windows/Excel CSV exports
-  const csvText = buffer.toString("utf-8").replace(/^\uFEFF/, "");
+  const isExcel = importFile.filename.toLowerCase().endsWith(".xlsx");
 
-  // All file types have a header row
-  const parsed = Papa.parse<Record<string, string>>(csvText, {
-    header: true,
-    skipEmptyLines: true,
-  }) as Papa.ParseResult<Record<string, string>>;
+  const rows: Record<string, string>[] = [];
 
-  // Normalize all column headers to lowercase_underscore so importers
-  // work regardless of whether the CSV uses "Dealer Code", "dealer_code",
-  // "DEALER_CODE", etc.  Also strip any stray BOM on the first key.
-  const rows = parsed.data.map((row) => {
-    const normalized: Record<string, string> = {};
-    for (const [key, value] of Object.entries(row)) {
-      const k = key.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s\-]+/g, "_");
-      normalized[k] = value as string;
+  if (isExcel) {
+    const wb = XLSX.read(buffer, { type: "buffer" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+    for (const row of rawRows) {
+      const normalized: Record<string, string> = {};
+      for (const [key, value] of Object.entries(row)) {
+        const k = key.trim().toLowerCase().replace(/[\s\-]+/g, "_");
+        normalized[k] = String(value);
+      }
+      rows.push(normalized);
     }
-    return normalized;
-  });
+  } else {
+    const csvText = buffer.toString("utf-8").replace(/^\uFEFF/, "");
+    const parsed = Papa.parse<Record<string, string>>(csvText, {
+      header: true,
+      skipEmptyLines: true,
+    }) as Papa.ParseResult<Record<string, string>>;
+    for (const row of parsed.data) {
+      const normalized: Record<string, string> = {};
+      for (const [key, value] of Object.entries(row)) {
+        const k = key.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s\-]+/g, "_");
+        normalized[k] = value as string;
+      }
+      rows.push(normalized);
+    }
+  }
 
   switch (importFile.fileType) {
     case "dealers":

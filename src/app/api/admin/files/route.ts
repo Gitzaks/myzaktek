@@ -52,9 +52,9 @@ export async function POST(req: NextRequest) {
       }
 
       // Last chunk — validate then assemble from MongoDB
-      if (!filename.endsWith(".csv")) {
+      if (!filename.endsWith(".csv") && !filename.endsWith(".xlsx")) {
         await ChunkBuffer.deleteMany({ uploadId });
-        return NextResponse.json({ error: "Only .csv files are allowed" }, { status: 400 });
+        return NextResponse.json({ error: "Only .csv and .xlsx files are allowed" }, { status: 400 });
       }
 
       const fileType = formData.get("fileType") as string;
@@ -112,8 +112,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "file and fileType are required" }, { status: 400 });
     }
 
-    if (!file.name.endsWith(".csv")) {
-      return NextResponse.json({ error: "Only .csv files are allowed" }, { status: 400 });
+    if (!file.name.endsWith(".csv") && !file.name.endsWith(".xlsx")) {
+      return NextResponse.json({ error: "Only .csv and .xlsx files are allowed" }, { status: 400 });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
