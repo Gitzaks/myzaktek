@@ -20,7 +20,10 @@ export async function importZIE(
       if (!dealerCode) continue;
 
       const dealer = await Dealer.findOne({ dealerCode });
-      if (!dealer) continue;
+      if (!dealer) {
+        errors.push(`No dealer found for code: "${dealerCode}"`);
+        continue;
+      }
 
       const exteriorUnits = parseNum(row["exterior_units"]);
       const interiorUnits = parseNum(row["interior_units"]);

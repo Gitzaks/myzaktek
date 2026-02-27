@@ -35,7 +35,10 @@ export async function importAutoPoint(
       if (!dmeName) continue;
 
       const dealer = dealerMap.get(dmeName.toLowerCase());
-      if (!dealer) continue;
+      if (!dealer) {
+        errors.push(`No dealer match for: "${dmeName}"`);
+        continue;
+      }
 
       const list           = parseNum(row["list"]);
       const ROs            = parseNum(row["ros"]);

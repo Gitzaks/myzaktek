@@ -30,7 +30,10 @@ export async function importBilling(
       const dealerCode = "ZAK" + match[1].padStart(4, "0");
 
       const dealer = await Dealer.findOne({ dealerCode });
-      if (!dealer) continue;
+      if (!dealer) {
+        errors.push(`No dealer found for code: "${dealerCode}" (from "${billingName}")`);
+        continue;
+      }
 
       const minimum = parseFloat(row["minimum"] ?? "0") || 0;
       const zaktekBilling = parseFloat(row["billing_1"] ?? "0") || 0;
