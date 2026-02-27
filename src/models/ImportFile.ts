@@ -14,6 +14,7 @@ export interface IImportFileDocument extends Document {
   recordsImported?: number;
   errorMessage?: string;
   storagePath: string;
+  fileData?: Buffer;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,6 +39,7 @@ const ImportFileSchema = new Schema<IImportFileDocument>(
     recordsImported: { type: Number },
     errorMessage: { type: String },
     storagePath: { type: String, required: true },
+    fileData: { type: Buffer },
   },
   { timestamps: true }
 );

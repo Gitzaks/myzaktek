@@ -79,7 +79,8 @@ export async function POST(req: NextRequest) {
         uploadedBy: session.user.id,
         year,
         month,
-        storagePath: `mongodb-chunk:${uploadId}`, // placeholder, data was in-memory
+        storagePath: `mongodb-chunk:${uploadId}`,
+        fileData: assembledBuffer,
       });
 
       try {
@@ -125,6 +126,7 @@ export async function POST(req: NextRequest) {
       year,
       month,
       storagePath: `mongodb-direct:${Date.now()}`,
+      fileData: buffer,
     });
 
     try {
