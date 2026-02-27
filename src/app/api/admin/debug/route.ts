@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
-import { readFile } from "fs/promises";
 import Papa from "papaparse";
 import Dealer from "@/models/Dealer";
 import Contract from "@/models/Contract";
@@ -24,22 +23,27 @@ export async function GET() {
     Contract.countDocuments({ status: "expired" }),
     Contract.countDocuments({ status: "cancelled" }),
     User.countDocuments({ role: "customer" }),
-    ImportFile.find().sort({ createdAt: -1 }).limit(5).lean(),
+    ImportFile.find().sort({ createdAt: -1 }).limit(5),
   ]);
 
-  // Read actual CSV headers from the most recent contracts import
-  const contractsImport = recentImports.find(f => f.fileType === "contracts");
-  let csvHeaders: string[] | null = null;
-  let sampleRow: Record<string, string> | null = null;
-  if (contractsImport?.storagePath) {
-    try {
-      const buffer = await readFile(contractsImport.storagePath);
-      const text = buffer.toString("utf-8").slice(0, 4000); // just first ~4KB
-      const parsed = Papa.parse<Record<string, string>>(text, { header: true, preview: 2 });
-      csvHeaders = parsed.meta.fields ?? [];
-      sampleRow = parsed.data[0] ?? null;
-    } catch {
-      csvHeaders = ["(could not read file)"];
+  // Inspect the most recent import's fileData buffer
+  const latestImport = recentImports[0];
+  let fileDataInfo: Record<string, unknown> = { status: "no recent imports" };
+  if (latestImport) {
+    const fd = latestImport.fileData;
+    if (!fd) {
+      fileDataInfo = { status: "fileData is missing on document" };
+    } else {
+      const buf = Buffer.from(fd as Buffer);
+      const text = buf.toString("utf-8").slice(0, 500);
+      const parsed = Papa.parse<Record<string, string>>(text, { header: true, preview: 3 });
+      fileDataInfo = {
+        bufferByteLength: buf.byteLength,
+        first500chars: text,
+        parsedHeaders: parsed.meta.fields ?? [],
+        parsedRowCount: parsed.data.length,
+        sampleRow: parsed.data[0] ?? null,
+      };
     }
   }
 
@@ -56,7 +60,6 @@ export async function GET() {
       errorMessage: f.errorMessage,
       createdAt: f.createdAt,
     })),
-    csvHeaders,
-    sampleRow,
+    latestImportFileData: fileDataInfo,
   });
 }
