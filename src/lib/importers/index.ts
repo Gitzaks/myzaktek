@@ -129,7 +129,7 @@ const ZAKCNTRCTS_COLUMNS = [
   "plan_code",              // 22: SKU e.g. 15ZAKEQU
   "coverage",               // 23: ZAK code e.g. ULTWINTNC
   "begin_mileage",          // 24: odometer at purchase
-  "sale_price",             // 25: gross sale price
+  "col_25",                 // 25: (reserved / unknown)
   "vin",                    // 26: 17-char VIN
   "vehicle_maker",          // 27: make abbreviation e.g. LEXS
   "model_code",             // 28: model code e.g. RX5
@@ -139,10 +139,10 @@ const ZAKCNTRCTS_COLUMNS = [
   "expiration_date",        // 32: contract end date
   "cancel_date",            // 33: cancellation effective date
   "email_address",          // 34: customer email
-  "internal_cost",          // 35: dealer net cost
+  "col_35",                 // 35: (reserved / unknown)
   "deductible",             // 36: deductible amount
-  "col_37",                 // 37: (reserved / unknown)
-  "col_38",                 // 38: (reserved / unknown)
+  "sale_price",             // 37: gross sale price
+  "internal_cost",          // 38: dealer net cost
 ] as const;
 
 // ── Async CSV parser ─────────────────────────────────────────────────────────
