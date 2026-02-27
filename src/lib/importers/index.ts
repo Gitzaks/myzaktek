@@ -14,8 +14,9 @@ export interface ImportResult {
   errors?: string[];
 }
 
-export async function runImport(importFile: IImportFileDocument): Promise<ImportResult> {
-  const buffer = await readFile(importFile.storagePath);
+export async function runImport(importFile: IImportFileDocument, inMemoryBuffer?: Buffer): Promise<ImportResult> {
+  // Use the provided in-memory buffer (e.g. from chunked upload assembly) or read from disk
+  const buffer = inMemoryBuffer ?? await readFile(importFile.storagePath);
   // Strip UTF-8 BOM if present — common in Windows/Excel CSV exports
   const csvText = buffer.toString("utf-8").replace(/^\uFEFF/, "");
 
