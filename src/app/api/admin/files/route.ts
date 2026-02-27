@@ -2,16 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
 import ImportFile from "@/models/ImportFile";
-import { writeFile, mkdir, readFile, appendFile, rm } from "fs/promises";
-import { join } from "path";
+import ChunkBuffer from "@/models/ChunkBuffer";
 import { runImport } from "@/lib/importers";
-
-
-// On Vercel (and other serverless platforms) the app root is read-only.
-// Only /tmp is writable at runtime.
-const UPLOAD_DIR = process.env.NODE_ENV === "production"
-  ? "/tmp/myzaktek-uploads"
-  : join(process.cwd(), "uploads");
 
 export async function GET() {
   const session = await auth();
@@ -25,12 +17,13 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  console.log("[upload] content-length:", req.headers.get("content-length"), "bytes");
   try {
     const session = await auth();
     if (session?.user?.role !== "admin") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+
+    await connectDB();
 
     const formData = await req.formData();
 
@@ -49,48 +42,36 @@ export async function POST(req: NextRequest) {
       const totalChunks = Number(totalChunksStr);
       const filename = chunk.name;
 
-      const chunkDir = join(UPLOAD_DIR, "chunks", uploadId);
-      await mkdir(chunkDir, { recursive: true });
-      await writeFile(
-        join(chunkDir, `chunk-${chunkIndex}`),
-        Buffer.from(await chunk.arrayBuffer()),
-      );
+      // Store chunk in MongoDB — works across all Vercel instances
+      const chunkData = Buffer.from(await chunk.arrayBuffer());
+      await ChunkBuffer.create({ uploadId, chunkIndex, data: chunkData });
 
       // Not the last chunk — acknowledge and wait for more
       if (chunkIndex < totalChunks - 1) {
         return NextResponse.json({ received: chunkIndex + 1 }, { status: 200 });
       }
 
-      // Last chunk — validate, assemble, persist
+      // Last chunk — validate then assemble from MongoDB
       if (!filename.endsWith(".csv")) {
-        await rm(chunkDir, { recursive: true, force: true });
+        await ChunkBuffer.deleteMany({ uploadId });
         return NextResponse.json({ error: "Only .csv files are allowed" }, { status: 400 });
       }
 
       const fileType = formData.get("fileType") as string;
       if (!fileType) {
-        await rm(chunkDir, { recursive: true, force: true });
+        await ChunkBuffer.deleteMany({ uploadId });
         return NextResponse.json({ error: "fileType is required" }, { status: 400 });
       }
 
       const year = formData.get("year") ? Number(formData.get("year")) : undefined;
       const month = formData.get("month") ? Number(formData.get("month")) : undefined;
 
-      await mkdir(UPLOAD_DIR, { recursive: true });
-      const storagePath = join(UPLOAD_DIR, `${Date.now()}-${filename}`);
+      // Retrieve all chunks from MongoDB in order and assemble
+      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 }).lean();
+      const assembledBuffer = Buffer.concat(chunks.map((c) => c.data as Buffer));
+      await ChunkBuffer.deleteMany({ uploadId });
 
-      for (let i = 0; i < totalChunks; i++) {
-        const chunkData = await readFile(join(chunkDir, `chunk-${i}`));
-        if (i === 0) {
-          await writeFile(storagePath, chunkData);
-        } else {
-          await appendFile(storagePath, chunkData);
-        }
-      }
-
-      await rm(chunkDir, { recursive: true, force: true });
-
-      await connectDB();
+      // Create ImportFile record and run import with assembled buffer
       const importFile = await ImportFile.create({
         filename,
         fileType,
@@ -98,12 +79,11 @@ export async function POST(req: NextRequest) {
         uploadedBy: session.user.id,
         year,
         month,
-        storagePath,
+        storagePath: `mongodb-chunk:${uploadId}`, // placeholder, data was in-memory
       });
 
-      // Run the import in the same request so the file is available in /tmp
       try {
-        const result = await runImport(importFile);
+        const result = await runImport(importFile, assembledBuffer);
         importFile.status = "imported";
         importFile.recordsImported = result.recordsImported;
         importFile.recordsTotal = result.recordsTotal;
@@ -121,7 +101,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(importFile, { status: 201 });
     }
 
-    // Legacy non-chunked path
+    // Legacy non-chunked path — send full file in one request
     const file = formData.get("file") as File | null;
     const fileType = formData.get("fileType") as string;
     const year = formData.get("year") ? Number(formData.get("year")) : undefined;
@@ -135,14 +115,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Only .csv files are allowed" }, { status: 400 });
     }
 
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    const buffer = Buffer.from(await file.arrayBuffer());
 
-    await mkdir(UPLOAD_DIR, { recursive: true });
-    const storagePath = join(UPLOAD_DIR, `${Date.now()}-${file.name}`);
-    await writeFile(storagePath, buffer);
-
-    await connectDB();
     const importFile = await ImportFile.create({
       filename: file.name,
       fileType,
@@ -150,12 +124,11 @@ export async function POST(req: NextRequest) {
       uploadedBy: session.user.id,
       year,
       month,
-      storagePath,
+      storagePath: `mongodb-direct:${Date.now()}`,
     });
 
-    // Run the import in the same request so the file is available in /tmp
     try {
-      const result = await runImport(importFile);
+      const result = await runImport(importFile, buffer);
       importFile.status = "imported";
       importFile.recordsImported = result.recordsImported;
       importFile.recordsTotal = result.recordsTotal;
