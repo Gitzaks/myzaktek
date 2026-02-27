@@ -90,10 +90,7 @@ export async function runImport(
 
     for (const sheetName of wb.SheetNames) {
       const parsed = parseSheetDate(sheetName, importFile.year);
-      if (!parsed) {
-        allErrors.push(`Skipped tab "${sheetName}" — could not parse month/year from tab name`);
-        continue;
-      }
+      if (!parsed) continue; // silently skip non-month tabs (e.g. "YTD Report")
       const sheetRows = normalizeExcelSheet(wb.Sheets[sheetName]);
       if (sheetRows.length === 0) continue;
       const result = await importAutoPoint(sheetRows, parsed.year, parsed.month);
