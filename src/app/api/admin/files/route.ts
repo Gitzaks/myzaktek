@@ -40,9 +40,10 @@ export async function POST(req: NextRequest) {
       const filename = formData.get("filename") as string;
       const fileType = formData.get("fileType") as string;
 
-      if (!filename || (!filename.endsWith(".csv") && !filename.endsWith(".xlsx"))) {
+      const fnLower = filename?.toLowerCase();
+      if (!filename || (!fnLower.endsWith(".csv") && !fnLower.endsWith(".xls") && !fnLower.endsWith(".xlsx"))) {
         await ChunkBuffer.deleteMany({ uploadId });
-        return NextResponse.json({ error: "Only .csv and .xlsx files are allowed" }, { status: 400 });
+        return NextResponse.json({ error: "Only .csv, .xls, and .xlsx files are allowed" }, { status: 400 });
       }
       if (!fileType) {
         await ChunkBuffer.deleteMany({ uploadId });
@@ -115,8 +116,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "file and fileType are required" }, { status: 400 });
     }
 
-    if (!file.name.endsWith(".csv") && !file.name.endsWith(".xlsx")) {
-      return NextResponse.json({ error: "Only .csv and .xlsx files are allowed" }, { status: 400 });
+    const nameLower = file.name.toLowerCase();
+    if (!nameLower.endsWith(".csv") && !nameLower.endsWith(".xls") && !nameLower.endsWith(".xlsx")) {
+      return NextResponse.json({ error: "Only .csv, .xls, and .xlsx files are allowed" }, { status: 400 });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());

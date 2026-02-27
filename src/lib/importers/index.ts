@@ -78,7 +78,8 @@ export async function runImport(
 ): Promise<ImportResult> {
   // Use the provided buffer, then the persisted fileData, then fall back to reading from disk
   const buffer = inMemoryBuffer ?? (importFile.fileData ? Buffer.from(importFile.fileData) : await readFile(importFile.storagePath));
-  const isExcel = importFile.filename.toLowerCase().endsWith(".xlsx");
+  const lower = importFile.filename.toLowerCase();
+  const isExcel = lower.endsWith(".xlsx") || lower.endsWith(".xls");
 
   // ── AutoPoint xlsx: iterate every sheet (one per month) ──────────────────
   if (isExcel && importFile.fileType === "autopoint") {

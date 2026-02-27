@@ -244,7 +244,7 @@ function BatchUploadSection({ onRefresh }: { onRefresh: () => void }) {
             Select Files
             <input
               type="file"
-              accept=".csv,.xlsx"
+              accept=".csv,.xls,.xlsx"
               multiple
               className="hidden"
               onChange={handleFileChange}
@@ -540,12 +540,12 @@ function FileSection({
           </div>
         )}
         <div className="flex items-center gap-3 text-sm text-gray-500 mb-2">
-          <span>You must select a single .csv or .xlsx file</span>
+          <span>You must select a single .csv, .xls, or .xlsx file</span>
           <label className="cursor-pointer border border-gray-300 rounded px-3 py-1 hover:bg-gray-50 text-gray-700">
             Select File
             <input
               type="file"
-              accept=".csv,.xlsx"
+              accept=".csv,.xls,.xlsx"
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
