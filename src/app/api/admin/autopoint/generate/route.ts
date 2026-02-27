@@ -73,8 +73,8 @@ export async function POST() {
 
   // Build CSV rows
   const rows = dueContracts.map((c) => {
-    const customer = c.customerId as Record<string, string> | null;
-    const dealer   = c.dealerId   as Record<string, string> | null;
+    const customer = c.customerId as unknown as Record<string, string> | null;
+    const dealer   = c.dealerId   as unknown as Record<string, string> | null;
     const vehicle  = c.vin ? vehicleMap.get(c.vin) : undefined;
 
     // Split "First Last" → first name / last name
