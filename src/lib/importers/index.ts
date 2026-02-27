@@ -16,7 +16,7 @@ export interface ImportResult {
   errors?: string[];
 }
 
-export type ProgressFn = (processed: number, total: number) => Promise<void>;
+export type ProgressFn = (processed: number, total: number, message?: string) => Promise<void>;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -1,12 +1,9 @@
-import { after } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
 import ImportFile from "@/models/ImportFile";
 import ChunkBuffer from "@/models/ChunkBuffer";
-import { runImport } from "@/lib/importers";
 
-// Allow up to 5 minutes for large file assembly + import processing
 export const maxDuration = 300;
 
 export async function GET() {
@@ -33,9 +30,11 @@ export async function POST(req: NextRequest) {
 
     const uploadId = formData.get("uploadId") as string | null;
 
-    // ── Finalize request (metadata only, no binary) ───────────────────────────
-    // Sent by the client after all chunks are stored. Returns 202 immediately;
-    // assembly + import runs via after() so the HTTP connection is never held open.
+    // ── Finalize request ──────────────────────────────────────────────────────
+    // Sent after all chunks are stored. Creates an ImportFile with status
+    // "pending" and returns the fileId immediately. The client then opens an
+    // SSE connection to /api/admin/files/[id]/import/stream which assembles
+    // the chunks and runs the import with live progress.
     if (uploadId && formData.get("finalize") === "true") {
       const filename = formData.get("filename") as string;
       const fileType = formData.get("fileType") as string;
@@ -50,50 +49,27 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "fileType is required" }, { status: 400 });
       }
 
-      const year = formData.get("year") ? Number(formData.get("year")) : undefined;
+      const year  = formData.get("year")  ? Number(formData.get("year"))  : undefined;
       const month = formData.get("month") ? Number(formData.get("month")) : undefined;
 
       const importFile = await ImportFile.create({
         filename,
         fileType,
-        status: "processing",
+        status: "pending",   // SSE stream route will set this to "processing"
         uploadedBy: session.user.id,
         year,
         month,
         storagePath: `mongodb-chunk:${uploadId}`,
       });
 
-      after(async () => {
-        try {
-          await connectDB();
-          const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 });
-          const assembledBuffer = Buffer.concat(chunks.map((c) => c.data));
-          await ChunkBuffer.deleteMany({ uploadId });
-
-          const result = await runImport(importFile, assembledBuffer);
-          importFile.status = "imported";
-          importFile.recordsImported = result.recordsImported;
-          importFile.recordsTotal = result.recordsTotal;
-          importFile.importErrors = result.errors ?? [];
-          if (result.errors && result.errors.length > 0) {
-            importFile.errorMessage = `${result.errors.length} row(s) failed`;
-          } else {
-            importFile.errorMessage = undefined;
-          }
-        } catch (err) {
-          importFile.status = "import_failed";
-          importFile.errorMessage = err instanceof Error ? err.message : "Unknown error";
-        }
-        await importFile.save();
-      });
-
+      // Return fileId so the client can open the SSE stream immediately
       return NextResponse.json(
         { processing: true, fileId: String(importFile._id) },
-        { status: 202 }
+        { status: 202 },
       );
     }
 
-    // ── Chunk storage (all chunks identical — no special last-chunk logic) ────
+    // ── Chunk storage ─────────────────────────────────────────────────────────
     const chunkIndexStr = formData.get("chunkIndex") as string | null;
     if (uploadId && chunkIndexStr !== null) {
       const chunk = formData.get("chunk") as File | null;
@@ -101,16 +77,17 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "chunk is required" }, { status: 400 });
       }
       const chunkIndex = Number(chunkIndexStr);
-      const chunkData = Buffer.from(await chunk.arrayBuffer());
+      const chunkData  = Buffer.from(await chunk.arrayBuffer());
       await ChunkBuffer.create({ uploadId, chunkIndex, data: chunkData });
       return NextResponse.json({ received: chunkIndex + 1 }, { status: 200 });
     }
 
-    // Legacy non-chunked path — send full file in one request
-    const file = formData.get("file") as File | null;
+    // ── Legacy non-chunked path ───────────────────────────────────────────────
+    // Kept for backwards compatibility; new uploads always use chunks.
+    const file     = formData.get("file") as File | null;
     const fileType = formData.get("fileType") as string;
-    const year = formData.get("year") ? Number(formData.get("year")) : undefined;
-    const month = formData.get("month") ? Number(formData.get("month")) : undefined;
+    const year     = formData.get("year")  ? Number(formData.get("year"))  : undefined;
+    const month    = formData.get("month") ? Number(formData.get("month")) : undefined;
 
     if (!file || !fileType) {
       return NextResponse.json({ error: "file and fileType are required" }, { status: 400 });
@@ -126,7 +103,7 @@ export async function POST(req: NextRequest) {
     const importFile = await ImportFile.create({
       filename: file.name,
       fileType,
-      status: "processing",
+      status: "pending",
       uploadedBy: session.user.id,
       year,
       month,
@@ -134,24 +111,10 @@ export async function POST(req: NextRequest) {
       fileData: buffer,
     });
 
-    try {
-      const result = await runImport(importFile, buffer);
-      importFile.status = "imported";
-      importFile.recordsImported = result.recordsImported;
-      importFile.recordsTotal = result.recordsTotal;
-      importFile.importErrors = result.errors ?? [];
-      if (result.errors && result.errors.length > 0) {
-        importFile.errorMessage = `${result.errors.length} row(s) failed`;
-      } else {
-        importFile.errorMessage = undefined;
-      }
-    } catch (err) {
-      importFile.status = "import_failed";
-      importFile.errorMessage = err instanceof Error ? err.message : "Unknown error";
-    }
-    await importFile.save();
-
-    return NextResponse.json(importFile, { status: 201 });
+    return NextResponse.json(
+      { processing: true, fileId: String(importFile._id) },
+      { status: 202 },
+    );
   } catch (err) {
     console.error("Upload error:", err);
     return NextResponse.json(

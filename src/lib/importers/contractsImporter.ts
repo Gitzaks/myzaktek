@@ -12,7 +12,8 @@ import type { ImportResult, ProgressFn } from "./index";
  * A–AL (38 columns): dealer_code … internal_cost
  *
  * Uses bulk operations (bulkWrite) throughout to handle large files efficiently.
- * Individual per-row DB calls would time out for files with 100k+ records.
+ * onProgress is called at every batch boundary so the SSE stream can push
+ * live progress bars and phase descriptions to the browser.
  */
 
 const PLAN_MAP: Record<string, "Basic" | "Basic with Interior" | "Ultimate" | "Ultimate with Interior"> = {
@@ -29,7 +30,22 @@ const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
   "Ultimate with Interior": "both",
 };
 
-const BATCH = 5000;
+const BATCH    = 5_000;   // default batch size
+const SR_BATCH = 20_000;  // larger batch for service records — fewer round-trips
+
+/** Generic bulk-write helper that bypasses strict Mongoose typings and calls
+ *  onBatch after each batch so the SSE stream can push live progress events. */
+async function bulkWrite<T>(
+  model: { bulkWrite: (ops: T[], opts: object) => Promise<unknown> },
+  ops: T[],
+  onBatch?: (done: number, total: number) => Promise<void>,
+  batchSize = BATCH,
+) {
+  for (let i = 0; i < ops.length; i += batchSize) {
+    await model.bulkWrite(ops.slice(i, i + batchSize), { ordered: false });
+    if (onBatch) await onBatch(Math.min(i + batchSize, ops.length), ops.length);
+  }
+}
 
 function parseDate(s: string | undefined): Date | null {
   if (!s || s.trim() === "" || s === "0000-00-00") return null;
@@ -62,15 +78,6 @@ function agreementId(row: Record<string, string>): string {
   return `${row.agreement?.trim()}-${row.agreement_suffix?.trim()}`;
 }
 
-async function bulkWrite<T>(
-  model: { bulkWrite: (ops: T[], opts: object) => Promise<unknown> },
-  ops: T[]
-) {
-  for (let i = 0; i < ops.length; i += BATCH) {
-    await model.bulkWrite(ops.slice(i, i + BATCH), { ordered: false });
-  }
-}
-
 export async function importContracts(
   rows: Record<string, string>[],
   onProgress?: ProgressFn,
@@ -81,8 +88,7 @@ export async function importContracts(
   const errors: string[] = [];
   const placeholderHash = await bcrypt.hash("zaktek-import-placeholder", 4);
 
-  // ── 1. Bulk upsert dealers ─────────────────────────────────────────────────
-  // Collect the first row seen for each unique dealer code to get address info.
+  // ── 1. Bulk upsert dealers (0 → 5%) ───────────────────────────────────────
   const dealerRowMap = new Map<string, Record<string, string>>();
   for (const row of rows) {
     const code = row.dealer_code?.trim();
@@ -90,19 +96,12 @@ export async function importContracts(
   }
 
   const dealerOps = [...dealerRowMap.entries()].map(([code, row]) => {
-    // Extract non-empty values; undefined values are excluded from $set by Mongoose
     const dealerName  = row.dealer_name?.trim()  || undefined;
-    const dealerPhone = (
-      row.dealer_phone ?? row.dealer_phone_number ?? row.phone_number ?? row.phone ?? ""
-    ).trim() || undefined;
-    const dealerAddr  = (
-      row.dealer_address_1 ?? row.dealer_address ?? row.address_1 ?? row.address ?? ""
-    ).trim() || undefined;
+    const dealerPhone = (row.dealer_phone ?? row.dealer_phone_number ?? row.phone_number ?? row.phone ?? "").trim() || undefined;
+    const dealerAddr  = (row.dealer_address_1 ?? row.dealer_address ?? row.address_1 ?? row.address ?? "").trim() || undefined;
     const dealerCity  = (row.dealer_city  ?? row.city  ?? "").trim() || undefined;
     const dealerState = (row.dealer_state ?? row.state ?? "").trim() || undefined;
-    const dealerZip   = (
-      row.dealer_zip_code ?? row.dealer_zip ?? row.zip_code ?? row.zip ?? ""
-    ).trim() || undefined;
+    const dealerZip   = (row.dealer_zip_code ?? row.dealer_zip ?? row.zip_code ?? row.zip ?? "").trim() || undefined;
 
     return {
       updateOne: {
@@ -110,8 +109,6 @@ export async function importContracts(
         update: {
           $set: {
             dealerCode: code,
-            // Only set name/zakCntrtsDealer when the CSV actually has a value —
-            // prevents overwriting a good name with undefined or an empty string.
             ...(dealerName  && { name: dealerName, zakCntrtsDealer: dealerName }),
             ...(dealerAddr  && { address: dealerAddr }),
             ...(dealerCity  && { city: dealerCity }),
@@ -122,10 +119,7 @@ export async function importContracts(
           $setOnInsert: {
             email: `${code.toLowerCase()}@dealers.zaktek.com`,
             active: true,
-            // For brand-new dealers only: fall back to code when name is missing
             ...(dealerName ? {} : { name: code }),
-            // Required schema fields — provide empty-string defaults for new records
-            // when the CSV doesn't carry these columns
             ...(dealerAddr  === undefined && { address: "" }),
             ...(dealerCity  === undefined && { city: "" }),
             ...(dealerState === undefined && { state: "" }),
@@ -143,16 +137,20 @@ export async function importContracts(
   } catch (err) {
     errors.push(`Dealer upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  await onProgress?.(Math.round(total * 0.05), total); // ~5%
+  await onProgress?.(
+    Math.round(total * 0.05),
+    total,
+    `Imported ${dealerRowMap.size.toLocaleString()} dealers`,
+  );
 
   // Build dealer code → _id lookup
   const dealersInDB = await Dealer.find(
     { dealerCode: { $in: [...dealerRowMap.keys()] } },
-    { dealerCode: 1 }
+    { dealerCode: 1 },
   ).lean();
   const dealerIdMap = new Map(dealersInDB.map((d) => [d.dealerCode as string, d._id]));
 
-  // ── 2. Bulk upsert users ───────────────────────────────────────────────────
+  // ── 2. Bulk upsert users / customers (5 → 30%) ────────────────────────────
   const userRowMap = new Map<string, Record<string, string>>();
   for (const row of rows) {
     const email = rowEmail(row);
@@ -166,19 +164,19 @@ export async function importContracts(
         filter: { email },
         update: {
           $set: {
-            name: fullName,
-            phone: row.owner_phone?.trim() || undefined,
+            name:    fullName,
+            phone:   row.owner_phone?.trim()     || undefined,
             address: row.owner_address_1?.trim() || undefined,
-            city: row.owner_city?.trim() || undefined,
-            state: row.owner_state?.trim() || undefined,
-            zip: row.owner_zip_code?.trim() || undefined,
+            city:    row.owner_city?.trim()       || undefined,
+            state:   row.owner_state?.trim()      || undefined,
+            zip:     row.owner_zip_code?.trim()   || undefined,
           },
           $setOnInsert: {
             email,
             password: placeholderHash,
-            role: "customer",
+            role:     "customer",
             dealerIds: [],
-            active: true,
+            active:   true,
           },
         },
         upsert: true,
@@ -187,30 +185,37 @@ export async function importContracts(
   });
 
   try {
-    await bulkWrite(User, userOps);
+    await bulkWrite(User, userOps, async (done, totalOps) => {
+      await onProgress?.(
+        Math.round(total * (0.05 + (done / totalOps) * 0.25)),
+        total,
+        `Importing customers: ${done.toLocaleString()} / ${totalOps.toLocaleString()}`,
+      );
+    });
   } catch (err) {
     errors.push(`User upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  await onProgress?.(Math.round(total * 0.30), total); // ~30%
 
-  // Build email → _id lookup (batch $in queries for very large sets)
+  // Build email → _id lookup in 5000-record batches
   const userIdMap = new Map<string, unknown>();
   const allEmails = [...userRowMap.keys()];
   for (let i = 0; i < allEmails.length; i += 5000) {
-    const batch = allEmails.slice(i, i + 5000);
-    const users = await User.find({ email: { $in: batch } }, { email: 1 }).lean();
+    const users = await User.find(
+      { email: { $in: allEmails.slice(i, i + 5000) } },
+      { email: 1 },
+    ).lean();
     for (const u of users) userIdMap.set(u.email as string, u._id);
   }
 
-  // ── 3. Bulk upsert contracts ───────────────────────────────────────────────
+  // ── 3. Bulk upsert contracts (30 → 60%) ───────────────────────────────────
   const contractOps = rows.map((row) => {
-    const code = row.dealer_code?.trim();
-    const email = rowEmail(row);
-    const agId = agreementId(row);
+    const code        = row.dealer_code?.trim();
+    const email       = rowEmail(row);
+    const agId        = agreementId(row);
     const coverageRaw = row.coverage?.trim() ?? "";
-    const plan = PLAN_MAP[coverageRaw.toLowerCase()] ?? "Basic";
-    const status = contractStatus(row);
-    const purchaseDate = parseDate(row.contract_purchase_date) ?? new Date();
+    const plan        = PLAN_MAP[coverageRaw.toLowerCase()] ?? "Basic";
+    const status      = contractStatus(row);
+    const purchaseDate   = parseDate(row.contract_purchase_date) ?? new Date();
     const expirationDate = parseDate(row.expiration_date) ?? new Date();
 
     return {
@@ -219,15 +224,15 @@ export async function importContracts(
         update: {
           $set: {
             customerId: userIdMap.get(email),
-            dealerId: dealerIdMap.get(code ?? ""),
-            vin: row.vin?.trim().toUpperCase() || undefined,
+            dealerId:   dealerIdMap.get(code ?? ""),
+            vin:        row.vin?.trim().toUpperCase() || undefined,
             plan,
             status,
-            beginsAt: purchaseDate,
-            endsAt: expirationDate,
+            beginsAt:     purchaseDate,
+            endsAt:       expirationDate,
             purchaseDate,
-            ...(row.sale_price?.trim()     && { salePrice:     parseFloat(row.sale_price)     || undefined }),
-            ...(row.internal_cost?.trim()  && { internalCost:  parseFloat(row.internal_cost)  || undefined }),
+            ...(row.sale_price?.trim()    && { salePrice:    parseFloat(row.sale_price)    || undefined }),
+            ...(row.internal_cost?.trim() && { internalCost: parseFloat(row.internal_cost) || undefined }),
           },
           $setOnInsert: { homeKit: false },
         },
@@ -237,47 +242,50 @@ export async function importContracts(
   });
 
   try {
-    await bulkWrite(Contract, contractOps);
+    await bulkWrite(Contract, contractOps, async (done, totalOps) => {
+      await onProgress?.(
+        Math.round(total * (0.30 + (done / totalOps) * 0.30)),
+        total,
+        `Importing contracts: ${done.toLocaleString()} / ${totalOps.toLocaleString()}`,
+      );
+    });
   } catch (err) {
     errors.push(`Contract upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  await onProgress?.(Math.round(total * 0.60), total); // ~60%
 
-  // Count imported = number of unique agreement IDs in the file (ordered:false means all succeed or are skipped)
   const allAgreementIds = [...new Set(rows.map(agreementId))];
-  const imported = allAgreementIds.length;
+  const imported        = allAgreementIds.length;
 
-  // Build agreementId → contract _id — only needed for active contracts (service records)
+  // Build agreementId → contract _id for active contracts (needed for service records)
   const activeAgreementIds = [...new Set(
-    rows.filter((r) => contractStatus(r) === "active").map(agreementId)
+    rows.filter((r) => contractStatus(r) === "active").map(agreementId),
   )];
   const contractIdMap = new Map<string, unknown>();
   for (let i = 0; i < activeAgreementIds.length; i += 5000) {
     const batch = activeAgreementIds.slice(i, i + 5000);
     const contracts = await Contract.find(
       { agreementId: { $in: batch } },
-      { agreementId: 1 }
+      { agreementId: 1 },
     ).lean();
     for (const c of contracts) contractIdMap.set(c.agreementId as string, c._id);
   }
 
-  // ── 4. Bulk upsert service records ────────────────────────────────────────
+  // ── 4. Bulk upsert service records (60 → 80%) ─────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const srOps: any[] = [];
   for (const row of rows) {
-    const status = contractStatus(row);
-    if (status !== "active") continue;
+    if (contractStatus(row) !== "active") continue;
 
-    const agId = agreementId(row);
+    const agId       = agreementId(row);
     const contractId = contractIdMap.get(agId);
     if (!contractId) continue;
 
-    const email = rowEmail(row);
-    const code = row.dealer_code?.trim();
-    const coverageRaw = row.coverage?.trim() ?? "";
-    const plan = PLAN_MAP[coverageRaw.toLowerCase()] ?? "Basic";
-    const coverageType = COVERAGE_TYPE[plan] ?? "exterior";
-    const purchaseDate = parseDate(row.contract_purchase_date) ?? new Date();
+    const email          = rowEmail(row);
+    const code           = row.dealer_code?.trim();
+    const coverageRaw    = row.coverage?.trim() ?? "";
+    const plan           = PLAN_MAP[coverageRaw.toLowerCase()] ?? "Basic";
+    const coverageType   = COVERAGE_TYPE[plan] ?? "exterior";
+    const purchaseDate   = parseDate(row.contract_purchase_date) ?? new Date();
     const expirationDate = parseDate(row.expiration_date) ?? new Date();
 
     for (const scheduledDate of getApplicationSchedule(purchaseDate, expirationDate)) {
@@ -287,12 +295,12 @@ export async function importContracts(
           update: {
             $setOnInsert: {
               contractId,
-              customerId: userIdMap.get(email),
-              dealerId: dealerIdMap.get(code ?? ""),
-              type: coverageType,
-              status: "scheduled",
+              customerId:    userIdMap.get(email),
+              dealerId:      dealerIdMap.get(code ?? ""),
+              type:          coverageType,
+              status:        "scheduled",
               scheduledDate,
-              reminderSent: false,
+              reminderSent:  false,
             },
           },
           upsert: true,
@@ -303,41 +311,48 @@ export async function importContracts(
 
   if (srOps.length > 0) {
     try {
-      await bulkWrite(ServiceRecord, srOps);
+      await bulkWrite(ServiceRecord, srOps, async (done, totalOps) => {
+        await onProgress?.(
+          Math.round(total * (0.60 + (done / totalOps) * 0.20)),
+          total,
+          `Generating service records: ${done.toLocaleString()} / ${totalOps.toLocaleString()}`,
+        );
+      }, SR_BATCH);
     } catch {
-      // non-fatal — service records can be rebuilt
+      // Non-fatal — service records can be rebuilt; don't fail the whole import
     }
+  } else {
+    await onProgress?.(Math.round(total * 0.80), total, "Service records are current");
   }
-  await onProgress?.(Math.round(total * 0.80), total); // ~80%
 
-  // ── 5. Bulk upsert vehicles ────────────────────────────────────────────────
+  // ── 5. Bulk upsert vehicles (80 → 100%) ───────────────────────────────────
   const vehicleOps = rows
     .filter((row) => row.vin?.trim())
     .map((row) => {
-      const vin = row.vin.trim().toUpperCase();
-      const email = rowEmail(row);
-      const code = row.dealer_code?.trim();
-      const coverageRaw = row.coverage?.trim() ?? "";
-      const plan = PLAN_MAP[coverageRaw.toLowerCase()] ?? "Basic";
-      const coverageType = COVERAGE_TYPE[plan] ?? "exterior";
-      const purchaseDate = parseDate(row.contract_purchase_date) ?? new Date();
+      const vin            = row.vin.trim().toUpperCase();
+      const email          = rowEmail(row);
+      const code           = row.dealer_code?.trim();
+      const coverageRaw    = row.coverage?.trim() ?? "";
+      const plan           = PLAN_MAP[coverageRaw.toLowerCase()] ?? "Basic";
+      const coverageType   = COVERAGE_TYPE[plan] ?? "exterior";
+      const purchaseDate   = parseDate(row.contract_purchase_date) ?? new Date();
       const expirationDate = parseDate(row.expiration_date) ?? new Date();
-      const status = contractStatus(row);
+      const status         = contractStatus(row);
 
       return {
         updateOne: {
           filter: { vin },
           update: {
             $set: {
-              customerId: userIdMap.get(email),
-              dealerId: dealerIdMap.get(code ?? ""),
-              year: parseInt(row.vehicle_year ?? "0", 10) || 0,
-              make: row.vehicle_maker?.trim() || "",
-              vehicleModel: row.series_name?.trim() || row.model_code?.trim() || "",
+              customerId:        userIdMap.get(email),
+              dealerId:          dealerIdMap.get(code ?? ""),
+              year:              parseInt(row.vehicle_year ?? "0", 10) || 0,
+              make:              row.vehicle_maker?.trim() || "",
+              vehicleModel:      row.series_name?.trim() || row.model_code?.trim() || "",
               purchaseDate,
               coverageType,
               warrantyExpiresAt: expirationDate,
-              active: status === "active",
+              active:            status === "active",
             },
           },
           upsert: true,
@@ -347,16 +362,23 @@ export async function importContracts(
 
   if (vehicleOps.length > 0) {
     try {
-      await bulkWrite(Vehicle, vehicleOps);
+      await bulkWrite(Vehicle, vehicleOps, async (done, totalOps) => {
+        await onProgress?.(
+          Math.round(total * (0.80 + (done / totalOps) * 0.20)),
+          total,
+          `Importing vehicles: ${done.toLocaleString()} / ${totalOps.toLocaleString()}`,
+        );
+      });
     } catch (err) {
       errors.push(`Vehicle upsert failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  await onProgress?.(total, total); // 100%
+
+  await onProgress?.(total, total, "Import complete");
 
   return {
-    recordsTotal: rows.length,
+    recordsTotal:    rows.length,
     recordsImported: imported,
-    errors: errors.length > 0 ? errors : undefined,
+    errors:          errors.length > 0 ? errors : undefined,
   };
 }
