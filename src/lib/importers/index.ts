@@ -100,6 +100,50 @@ function parseSheetDate(name: string, fallbackYear?: number): { year: number; mo
   return { year, month };
 }
 
+// ── ZAKCNTRCTS positional column map ─────────────────────────────────────────
+// This file has NO header row. Column positions are fixed (A–AL, 38 cols).
+// Col indices confirmed from first-row diagnostic (Feb 2026 import).
+const ZAKCNTRCTS_COLUMNS = [
+  "record_type",            // 0 : always "1"
+  "record_sub",             // 1 : always "2"
+  "term_months",            // 2 : e.g. 60
+  "vehicle_year",           // 3 : e.g. 2016
+  "agreement",              // 4 : 5-digit agreement number
+  "dealer_zip_code",        // 5 : dealer zip
+  "owner_zip_code",         // 6 : customer zip (duplicate city/state follow)
+  "max_mileage",            // 7 : e.g. 999999
+  "agreement_suffix",       // 8 : 8-digit suffix (forms unique agreementId with col 4)
+  "dealer_code",            // 9 : e.g. ZAK0674
+  "dealer_name",            // 10: e.g. Camelback VW Mazda Subaru
+  "dealer_address_1",       // 11: street address
+  "dealer_city",            // 12: city
+  "dealer_state",           // 13: state
+  "dealer_phone",           // 14: phone (may be empty)
+  "owner_last_name",        // 15: customer last name
+  "owner_first_name",       // 16: customer first name (may include middle)
+  "owner_address_1",        // 17: customer street address
+  "owner_address_2",        // 18: apt / unit (often empty)
+  "owner_city",             // 19: customer city
+  "owner_state",            // 20: customer state
+  "owner_phone",            // 21: customer phone
+  "plan_code",              // 22: SKU e.g. 15ZAKEQU
+  "coverage",               // 23: ZAK code e.g. ULTWINTNC
+  "begin_mileage",          // 24: odometer at purchase
+  "sale_price",             // 25: gross sale price
+  "vin",                    // 26: 17-char VIN
+  "vehicle_maker",          // 27: make abbreviation e.g. LEXS
+  "model_code",             // 28: model code e.g. RX5
+  "series_name",            // 29: full model name e.g. RX 350
+  "contract_purchase_date", // 30: purchase / start date
+  "expiration_date",        // 31: contract end date
+  "cancel_post_date",       // 32: cancellation post date (non-empty = cancelled)
+  "cancel_date",            // 33: cancellation effective date
+  "email_address",          // 34: customer email
+  "internal_cost",          // 35: dealer net cost
+  "deductible",             // 36: deductible amount
+  "col_37",                 // 37: (reserved / unknown)
+] as const;
+
 // ── Async CSV parser ─────────────────────────────────────────────────────────
 
 /**
@@ -108,8 +152,15 @@ function parseSheetDate(name: string, fallbackYear?: number): { year: number; mo
  * between each chunk so the event loop stays free during the entire parse —
  * this lets SSE data flush to the TCP socket and lets setInterval heartbeats
  * fire instead of blocking for the whole duration of a large-file parse.
+ *
+ * Pass `columns` for files that have NO header row (e.g. ZAKCNTRCTS). Each
+ * row is then an array; values are mapped to the supplied column names by
+ * position. Without `columns` the first CSV row is used as the header.
  */
-function parseCsvBufferAsync(buffer: Buffer): Promise<Record<string, string>[]> {
+function parseCsvBufferAsync(
+  buffer: Buffer,
+  columns?: readonly string[],
+): Promise<Record<string, string>[]> {
   return new Promise<Record<string, string>[]>((resolve, reject) => {
     const rows: Record<string, string>[] = [];
 
@@ -135,20 +186,29 @@ function parseCsvBufferAsync(buffer: Buffer): Promise<Record<string, string>[]> 
     // PapaParse detects a Node.js Readable and processes it asynchronously.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     Papa.parse(source as any, {
-      header: true,
+      header: !columns,
       skipEmptyLines: true,
       step(result) {
-        const row = result.data as Record<string, string>;
-        const normalized: Record<string, string> = {};
-        for (const [key, value] of Object.entries(row)) {
-          const k = key
-            .replace(/^\uFEFF/, "")
-            .trim()
-            .toLowerCase()
-            .replace(/[\s\-]+/g, "_");
-          normalized[k] = value as string;
+        if (columns) {
+          // Positional (no-header) mode — result.data is string[]
+          const arr = result.data as string[];
+          const row: Record<string, string> = {};
+          columns.forEach((col, i) => { row[col] = (arr[i] ?? "").trim(); });
+          rows.push(row);
+        } else {
+          // Named-header mode — normalise the key names
+          const rawRow = result.data as Record<string, string>;
+          const normalized: Record<string, string> = {};
+          for (const [key, value] of Object.entries(rawRow)) {
+            const k = key
+              .replace(/^\uFEFF/, "")
+              .trim()
+              .toLowerCase()
+              .replace(/[\s\-]+/g, "_");
+            normalized[k] = value as string;
+          }
+          rows.push(normalized);
         }
-        rows.push(normalized);
       },
       complete: () => resolve(rows),
       error:    (err: Error) => reject(err),
@@ -225,8 +285,10 @@ export async function runImport(
     rows = normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]);
   } else {
     // Async streaming parse — does NOT block the event loop (see parseCsvBufferAsync above).
+    // ZAKCNTRCTS exports have no header row — pass positional column names.
     await onProgress?.(0, 0, "Parsing file…");
-    rows = await parseCsvBufferAsync(buffer);
+    const csvColumns = importFile.fileType === "contracts" ? ZAKCNTRCTS_COLUMNS : undefined;
+    rows = await parseCsvBufferAsync(buffer, csvColumns);
     await onProgress?.(0, rows.length, "File parsed, starting import…");
   }
 

@@ -17,10 +17,20 @@ import type { ImportResult, ProgressFn } from "./index";
  */
 
 const PLAN_MAP: Record<string, "Basic" | "Basic with Interior" | "Ultimate" | "Ultimate with Interior"> = {
-  "basic": "Basic",
-  "basic with interior": "Basic with Interior",
-  "ultimate": "Ultimate",
+  // Human-readable names (header-based CSV format)
+  "basic":                  "Basic",
+  "basic with interior":    "Basic with Interior",
+  "ultimate":               "Ultimate",
   "ultimate with interior": "Ultimate with Interior",
+  // ZAK short codes (headerless CSV — coverage col contains these)
+  "bsc":                    "Basic",
+  "bscnc":                  "Basic",
+  "bscwint":                "Basic with Interior",
+  "bscwintnc":              "Basic with Interior",
+  "ult":                    "Ultimate",
+  "ultnc":                  "Ultimate",
+  "ultwint":                "Ultimate with Interior",
+  "ultwintnc":              "Ultimate with Interior",
 };
 
 const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
@@ -109,8 +119,10 @@ export async function importContracts(
   if (missing.length > 0) {
     errors.push(
       `Column mapping mismatch — missing: [${missing.join(", ")}]. ` +
-      `Actual columns found: [${[...foundKeys].slice(0, 30).join(", ")}]`,
+      `All ${foundKeys.size} columns found: [${[...foundKeys].join(", ")}]`,
     );
+    // Bail out — no point writing garbage data to the DB.
+    return { recordsTotal: rows.length, recordsImported: 0, errors };
   }
 
   // ── 1. Bulk upsert dealers (0 → 5%) ───────────────────────────────────────
