@@ -65,6 +65,16 @@ const FILE_TYPE_HAS_DATE: Record<FileType, boolean> = {
   units: true, zie: true, billing: true, autopoint: true,
 };
 
+// Types where the month comes from sheet tabs, not the filename.
+// Only a year (optional) is needed from the filename as a fallback.
+const FILE_TYPE_YEAR_ONLY = new Set<FileType>(["autopoint"]);
+
+/** Extract just the year from a filename — used when month comes from sheet tabs. */
+function parseYearFromFilename(filename: string): number | null {
+  const m = filename.match(/\b(20\d{2})\b/);
+  return m ? parseInt(m[1]) : null;
+}
+
 function parseFileTypeFromFilename(filename: string): FileType | null {
   const upper = filename.toUpperCase();
   if (upper.includes("ZAKCNTRCTS") || upper.includes("CONTRACTS") || upper.includes("CNTRCTS")) return "contracts";
@@ -113,7 +123,8 @@ function BatchUploadSection({ onRefresh }: { onRefresh: () => void }) {
   async function uploadOneFile(item: BatchItem, idx: number) {
     const { file, detectedType, detectedDate } = item;
     const fileType = detectedType!;
-    const hasDate = FILE_TYPE_HAS_DATE[fileType];
+    const hasDate     = FILE_TYPE_HAS_DATE[fileType] && !FILE_TYPE_YEAR_ONLY.has(fileType);
+    const hasYearOnly = FILE_TYPE_YEAR_ONLY.has(fileType);
 
     const CHUNK_SIZE = 1 * 1024 * 1024;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -145,6 +156,10 @@ function BatchUploadSection({ onRefresh }: { onRefresh: () => void }) {
     if (hasDate && detectedDate) {
       finalizeForm.append("year", String(detectedDate.year));
       finalizeForm.append("month", String(detectedDate.month));
+    } else if (hasYearOnly) {
+      // Year is optional fallback; month comes from sheet tabs
+      const yr = detectedDate?.year ?? parseYearFromFilename(file.name);
+      if (yr) finalizeForm.append("year", String(yr));
     }
 
     const finalizeRes = await fetch("/api/admin/files", { method: "POST", body: finalizeForm });
@@ -179,7 +194,7 @@ function BatchUploadSection({ onRefresh }: { onRefresh: () => void }) {
         alert(`Cannot detect file type for "${it.file.name}". Please select it manually.`);
         return;
       }
-      if (FILE_TYPE_HAS_DATE[it.detectedType] && !it.detectedDate) {
+      if (FILE_TYPE_HAS_DATE[it.detectedType] && !FILE_TYPE_YEAR_ONLY.has(it.detectedType) && !it.detectedDate) {
         alert(`Cannot detect month/year from "${it.file.name}". Rename to include MM.YYYY (e.g. 05.2025_ZIE.csv).`);
         return;
       }
@@ -206,9 +221,12 @@ function BatchUploadSection({ onRefresh }: { onRefresh: () => void }) {
     setChunkProgress("");
   }
 
-  const readyCount = items.filter(
-    (it) => it.detectedType && (!FILE_TYPE_HAS_DATE[it.detectedType] || it.detectedDate)
-  ).length;
+  const readyCount = items.filter((it) => {
+    if (!it.detectedType) return false;
+    if (!FILE_TYPE_HAS_DATE[it.detectedType]) return true;
+    if (FILE_TYPE_YEAR_ONLY.has(it.detectedType)) return true; // month comes from sheet tabs
+    return !!it.detectedDate;
+  }).length;
 
   return (
     <div className="mb-8">
@@ -291,9 +309,15 @@ function BatchUploadSection({ onRefresh }: { onRefresh: () => void }) {
                   </td>
                   <td className="px-3 py-2 text-xs">
                     {it.detectedType && FILE_TYPE_HAS_DATE[it.detectedType] ? (
-                      it.detectedDate
-                        ? <span className="text-green-700">{MONTH_NAMES[it.detectedDate.month - 1]} {it.detectedDate.year}</span>
-                        : <span className="text-red-600">not detected</span>
+                      FILE_TYPE_YEAR_ONLY.has(it.detectedType) ? (
+                        <span className="text-green-700">
+                          {it.detectedDate?.year ?? parseYearFromFilename(it.file.name) ?? "year?"} — months from tabs
+                        </span>
+                      ) : it.detectedDate ? (
+                        <span className="text-green-700">{MONTH_NAMES[it.detectedDate.month - 1]} {it.detectedDate.year}</span>
+                      ) : (
+                        <span className="text-red-600">not detected</span>
+                      )
                     ) : (
                       <span className="text-gray-400">—</span>
                     )}
@@ -330,16 +354,19 @@ function FileSection({
   title,
   fileType,
   hasYearMonth = false,
+  hasYearOnly = false,
   files,
   onRefresh,
 }: {
   title: string;
   fileType: FileType;
   hasYearMonth?: boolean;
+  hasYearOnly?: boolean;
   files: ImportFile[];
   onRefresh: () => void;
 }) {
   const [parsedDate, setParsedDate] = useState<{ year: number; month: number } | null>(null);
+  const [detectedYear, setDetectedYear] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -374,6 +401,7 @@ function FileSection({
       setError("Could not detect month/year from filename. Rename the file to include YYYYMM (e.g. FILE_202501.csv).");
       return;
     }
+    // hasYearOnly: year is optional (month comes from sheet tabs), never block upload
     setUploading(true);
     setUploadProgress("");
     setError("");
@@ -426,6 +454,9 @@ function FileSection({
       if (hasYearMonth && parsedDate) {
         finalizeForm.append("year", String(parsedDate.year));
         finalizeForm.append("month", String(parsedDate.month));
+      } else if (hasYearOnly && (detectedYear ?? parsedDate?.year)) {
+        // Only send year — month comes from sheet tab names at import time
+        finalizeForm.append("year", String(detectedYear ?? parsedDate!.year));
       }
 
       const finalizeRes = await fetch("/api/admin/files", { method: "POST", body: finalizeForm });
@@ -500,6 +531,14 @@ function FileSection({
             }
           </div>
         )}
+        {hasYearOnly && selectedFile && (
+          <div className="mb-2 text-xs">
+            {detectedYear
+              ? <span className="text-green-700">Year {detectedYear} detected — months will be read from each sheet tab</span>
+              : <span className="text-gray-500">No year detected in filename — year will be read from sheet tab names (e.g. &quot;January 2025&quot;)</span>
+            }
+          </div>
+        )}
         <div className="flex items-center gap-3 text-sm text-gray-500 mb-2">
           <span>You must select a single .csv or .xlsx file</span>
           <label className="cursor-pointer border border-gray-300 rounded px-3 py-1 hover:bg-gray-50 text-gray-700">
@@ -514,6 +553,7 @@ function FileSection({
                 setError("");
                 if (f) {
                   if (hasYearMonth) setParsedDate(parseYearMonthFromFilename(f.name));
+                  if (hasYearOnly) setDetectedYear(parseYearFromFilename(f.name));
                   const detected = parseFileTypeFromFilename(f.name);
                   if (detected && detected !== fileType) {
                     setError(
@@ -836,7 +876,7 @@ export default function AdminClient() {
       <FileSection title="Units Files" fileType="units" hasYearMonth files={files} onRefresh={refresh} />
       <FileSection title="ZIE Files" fileType="zie" hasYearMonth files={files} onRefresh={refresh} />
       <FileSection title="Billing Files" fileType="billing" hasYearMonth files={files} onRefresh={refresh} />
-      <FileSection title="AutoPoint Results" fileType="autopoint" hasYearMonth files={files} onRefresh={refresh} />
+      <FileSection title="AutoPoint Results" fileType="autopoint" hasYearOnly files={files} onRefresh={refresh} />
 
       {/* Batch upload */}
       <BatchUploadSection onRefresh={refresh} />
