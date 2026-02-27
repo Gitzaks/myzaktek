@@ -28,8 +28,14 @@ interface AutoPointExport {
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 function parseYearMonthFromFilename(filename: string): { year: number; month: number } | null {
+  // Try MM.YYYY (e.g. 01.2025_Units.csv)
+  let m = filename.match(/(?<!\d)(\d{2})\.(\d{4})(?!\d)/);
+  if (m) {
+    const month = parseInt(m[1]), year = parseInt(m[2]);
+    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12) return { year, month };
+  }
   // Try YYYY-MM or YYYY_MM (e.g. 2025-01, 2025_01)
-  let m = filename.match(/(\d{4})[-_](\d{2})/);
+  m = filename.match(/(\d{4})[-_](\d{2})/);
   if (m) {
     const year = parseInt(m[1]), month = parseInt(m[2]);
     if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12) return { year, month };
