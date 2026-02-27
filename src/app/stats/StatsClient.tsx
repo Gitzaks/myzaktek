@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
@@ -98,7 +99,7 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
             <div>
               <div className="text-2xl font-bold">{fmt(summary?.remindersThisMonth ?? 0)}</div>
               <div className="text-xs text-gray-500 uppercase">Reminders This Month</div>
-              <div className="text-xs text-[#1565a8] cursor-pointer hover:underline">Click to see list</div>
+              <Link href="/reminders" className="text-xs text-[#1565a8] hover:underline">Click to see list</Link>
             </div>
           </div>
           <div className="flex items-center gap-3">
