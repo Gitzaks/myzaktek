@@ -70,9 +70,10 @@ export async function POST(req: NextRequest) {
       const month = formData.get("month") ? Number(formData.get("month")) : undefined;
 
       // Retrieve all chunks from MongoDB in order and assemble.
-      // .lean() skips Mongoose document wrapping, halving memory use for large uploads.
-      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 }).lean();
-      const assembledBuffer = Buffer.concat(chunks.map((c) => Buffer.from(c.data)));
+      // Do NOT use .lean() — lean returns Buffer fields as BSON Binary objects, which
+      // Buffer.concat cannot read correctly, resulting in a silent empty buffer.
+      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 });
+      const assembledBuffer = Buffer.concat(chunks.map((c) => c.data));
       await ChunkBuffer.deleteMany({ uploadId });
 
       // Create ImportFile record and run import with assembled buffer.
