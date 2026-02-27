@@ -589,40 +589,59 @@ function FileSection({
                     </td>
                     <td className="px-4 py-2 text-center">
                       {/* Status text */}
-                      <span className={
-                        f.status === "imported"     ? "text-gray-500" :
-                        f.status === "import_failed"? "text-red-600"  :
-                        timedOut                    ? "text-orange-500":
-                        isStreaming || f.status === "processing" ? "text-blue-600" :
-                        "text-gray-400"
-                      }>
-                        {f.status === "imported"
-                          ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
-                          : f.status === "import_failed" ? "Import Failed"
-                          : timedOut ? "Timed out — click Import to retry"
-                          : isStreaming
-                            ? `Importing… ${stream.pct}%`
-                          : f.status === "processing" ? "Processing…"
-                          : "Pending"}
-                      </span>
+                      {(() => {
+                        const dbPct =
+                          !isStreaming &&
+                          f.status === "processing" &&
+                          f.recordsTotal &&
+                          f.processedRows != null
+                            ? Math.round((f.processedRows / f.recordsTotal) * 100)
+                            : null;
+                        return (
+                          <>
+                            <span className={
+                              f.status === "imported"      ? "text-gray-500" :
+                              f.status === "import_failed" ? "text-red-600"  :
+                              timedOut                     ? "text-orange-500":
+                              isStreaming || f.status === "processing" ? "text-blue-600" :
+                              "text-gray-400"
+                            }>
+                              {f.status === "imported"
+                                ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
+                                : f.status === "import_failed" ? "Import Failed"
+                                : timedOut ? "Timed out — click Import to retry"
+                                : isStreaming
+                                  ? `Importing… ${stream.pct}%`
+                                : f.status === "processing"
+                                  ? dbPct != null ? `Processing… ${dbPct}%` : "Processing…"
+                                : "Pending"}
+                            </span>
 
-                      {/* Live progress bar (only when SSE stream is active) */}
-                      {isStreaming && (
-                        <div className="mt-1.5 w-full min-w-[220px]">
-                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                            <div
-                              className="bg-[#1565a8] h-2 rounded-full transition-all duration-300"
-                              style={{ width: `${stream.pct}%` }}
-                            />
-                          </div>
-                          {stream.message && (
-                            <div className="text-xs text-gray-500 mt-0.5 text-left truncate max-w-[260px]"
-                              title={stream.message}>
-                              {stream.message}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                            {/* Progress bar — live when streaming, DB-backed when polling */}
+                            {(isStreaming || (f.status === "processing" && !isStreaming && dbPct != null)) && (
+                              <div className="mt-1.5 w-full min-w-[220px]">
+                                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                  <div
+                                    className={`h-2 rounded-full transition-all duration-300 ${isStreaming ? "bg-[#1565a8]" : "bg-blue-300"}`}
+                                    style={{ width: `${isStreaming ? stream.pct : dbPct}%` }}
+                                  />
+                                </div>
+                                {isStreaming && stream.message && (
+                                  <div className="text-xs text-gray-500 mt-0.5 text-left truncate max-w-[260px]"
+                                    title={stream.message}>
+                                    {stream.message}
+                                  </div>
+                                )}
+                                {!isStreaming && dbPct != null && (
+                                  <div className="text-xs text-gray-400 mt-0.5 text-left">
+                                    Running in background — refreshing…
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
 
                       {timedOut && (
                         <button onClick={() => handleReset(f._id)}

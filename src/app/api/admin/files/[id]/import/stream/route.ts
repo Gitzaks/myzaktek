@@ -60,6 +60,12 @@ export async function GET(
         }
       }
 
+      // Send SSE comment lines every 20 s so proxies/load balancers don't
+      // kill the idle connection during long silent phases (dealer writes, etc.)
+      const heartbeat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(":keep-alive\n\n")); } catch { /* closed */ }
+      }, 20_000);
+
       let lastDbSave = Date.now();
 
       try {
@@ -117,6 +123,8 @@ export async function GET(
           err instanceof Error ? err.message : "Unknown error";
         await importFile.save();
         send({ type: "error", message: importFile.errorMessage });
+      } finally {
+        clearInterval(heartbeat);
       }
 
       try {
