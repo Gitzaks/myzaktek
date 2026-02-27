@@ -34,7 +34,13 @@ const BATCH    = 5_000;   // default batch size
 const SR_BATCH = 20_000;  // larger batch for service records — fewer round-trips
 
 /** Generic bulk-write helper that bypasses strict Mongoose typings and calls
- *  onBatch after each batch so the SSE stream can push live progress events. */
+ *  onBatch after each batch so the SSE stream can push live progress events.
+ *
+ *  With ordered:false, MongoDB attempts every op in a batch even when some fail.
+ *  The driver then throws a MongoBulkWriteError to report the partial failures.
+ *  We catch that error per-batch so the loop continues to subsequent batches
+ *  instead of aborting mid-import. True unexpected errors (network, auth, etc.)
+ *  are re-thrown so the outer try/catch can handle them. */
 async function bulkWrite<T>(
   model: { bulkWrite: (ops: T[], opts: object) => Promise<unknown> },
   ops: T[],
@@ -42,7 +48,14 @@ async function bulkWrite<T>(
   batchSize = BATCH,
 ) {
   for (let i = 0; i < ops.length; i += batchSize) {
-    await model.bulkWrite(ops.slice(i, i + batchSize), { ordered: false });
+    try {
+      await model.bulkWrite(ops.slice(i, i + batchSize), { ordered: false });
+    } catch (err) {
+      // MongoBulkWriteError means MongoDB processed all ops but some failed
+      // (duplicate keys, validation, etc.). All other ops in the batch still
+      // committed. Re-throw anything that isn't a bulk-write partial failure.
+      if ((err as { name?: string }).name !== "MongoBulkWriteError") throw err;
+    }
     if (onBatch) await onBatch(Math.min(i + batchSize, ops.length), ops.length);
   }
 }

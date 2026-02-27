@@ -15,7 +15,7 @@ export async function GET() {
 
   await connectDB();
 
-  const [totalDealers, activeDealers, totalContracts, activeContracts, expiredContracts, cancelledContracts, totalCustomers, recentImports] = await Promise.all([
+  const [totalDealers, activeDealers, totalContracts, activeContracts, expiredContracts, cancelledContracts, totalCustomers, recentImports, sampleContracts] = await Promise.all([
     Dealer.countDocuments(),
     Dealer.countDocuments({ active: true }),
     Contract.countDocuments(),
@@ -24,6 +24,11 @@ export async function GET() {
     Contract.countDocuments({ status: "cancelled" }),
     User.countDocuments({ role: "customer" }),
     ImportFile.find().sort({ createdAt: -1 }).limit(5),
+    // Sample newest 5 contracts so we can inspect status, dealerId, agreementId
+    Contract.find().sort({ createdAt: -1 }).limit(5)
+      .select("agreementId status dealerId customerId beginsAt endsAt purchaseDate")
+      .populate("dealerId", "name dealerCode")
+      .lean(),
   ]);
 
   // Inspect the most recent import's fileData buffer
@@ -61,5 +66,6 @@ export async function GET() {
       createdAt: f.createdAt,
     })),
     latestImportFileData: fileDataInfo,
+    sampleContracts,
   });
 }
