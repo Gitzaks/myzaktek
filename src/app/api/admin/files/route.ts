@@ -31,37 +31,19 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
 
-    // Chunked upload path
     const uploadId = formData.get("uploadId") as string | null;
-    const chunkIndexStr = formData.get("chunkIndex") as string | null;
-    const totalChunksStr = formData.get("totalChunks") as string | null;
 
-    if (uploadId && chunkIndexStr !== null && totalChunksStr !== null) {
-      const chunk = formData.get("chunk") as File | null;
-      if (!chunk) {
-        return NextResponse.json({ error: "chunk is required" }, { status: 400 });
-      }
+    // ── Finalize request (metadata only, no binary) ───────────────────────────
+    // Sent by the client after all chunks are stored. Returns 202 immediately;
+    // assembly + import runs via after() so the HTTP connection is never held open.
+    if (uploadId && formData.get("finalize") === "true") {
+      const filename = formData.get("filename") as string;
+      const fileType = formData.get("fileType") as string;
 
-      const chunkIndex = Number(chunkIndexStr);
-      const totalChunks = Number(totalChunksStr);
-      const filename = chunk.name;
-
-      // Store chunk in MongoDB — works across all Vercel instances
-      const chunkData = Buffer.from(await chunk.arrayBuffer());
-      await ChunkBuffer.create({ uploadId, chunkIndex, data: chunkData });
-
-      // Not the last chunk — acknowledge and wait for more
-      if (chunkIndex < totalChunks - 1) {
-        return NextResponse.json({ received: chunkIndex + 1 }, { status: 200 });
-      }
-
-      // Last chunk — validate then assemble from MongoDB
-      if (!filename.endsWith(".csv") && !filename.endsWith(".xlsx")) {
+      if (!filename || (!filename.endsWith(".csv") && !filename.endsWith(".xlsx"))) {
         await ChunkBuffer.deleteMany({ uploadId });
         return NextResponse.json({ error: "Only .csv and .xlsx files are allowed" }, { status: 400 });
       }
-
-      const fileType = formData.get("fileType") as string;
       if (!fileType) {
         await ChunkBuffer.deleteMany({ uploadId });
         return NextResponse.json({ error: "fileType is required" }, { status: 400 });
@@ -70,7 +52,6 @@ export async function POST(req: NextRequest) {
       const year = formData.get("year") ? Number(formData.get("year")) : undefined;
       const month = formData.get("month") ? Number(formData.get("month")) : undefined;
 
-      // Create the ImportFile record immediately so the client can poll it.
       const importFile = await ImportFile.create({
         filename,
         fileType,
@@ -81,9 +62,6 @@ export async function POST(req: NextRequest) {
         storagePath: `mongodb-chunk:${uploadId}`,
       });
 
-      // Use after() to assemble + import after the 202 response is sent.
-      // This avoids holding the HTTP connection open for minutes while processing
-      // a large file, which causes Vercel to return a 405 on timeout.
       after(async () => {
         try {
           await connectDB();
@@ -108,11 +86,23 @@ export async function POST(req: NextRequest) {
         await importFile.save();
       });
 
-      // Return immediately — client polls GET /api/admin/files until status changes.
       return NextResponse.json(
         { processing: true, fileId: String(importFile._id) },
         { status: 202 }
       );
+    }
+
+    // ── Chunk storage (all chunks identical — no special last-chunk logic) ────
+    const chunkIndexStr = formData.get("chunkIndex") as string | null;
+    if (uploadId && chunkIndexStr !== null) {
+      const chunk = formData.get("chunk") as File | null;
+      if (!chunk) {
+        return NextResponse.json({ error: "chunk is required" }, { status: 400 });
+      }
+      const chunkIndex = Number(chunkIndexStr);
+      const chunkData = Buffer.from(await chunk.arrayBuffer());
+      await ChunkBuffer.create({ uploadId, chunkIndex, data: chunkData });
+      return NextResponse.json({ received: chunkIndex + 1 }, { status: 200 });
     }
 
     // Legacy non-chunked path — send full file in one request

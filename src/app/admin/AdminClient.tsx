@@ -91,49 +91,22 @@ function FileSection({
     const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
     try {
+      // Upload all chunks — every request is identical (just store + 200).
+      // No special handling for the last chunk avoids the Vercel 405 issue.
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         setUploadProgress(`${chunkIndex + 1}/${totalChunks}`);
 
         const start = chunkIndex * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
-        const chunkBlob = selectedFile.slice(start, end); // lazy slice — only this 1MB is sent
+        const chunkBlob = selectedFile.slice(start, end);
 
         const form = new FormData();
         form.append("chunk", chunkBlob, selectedFile.name);
         form.append("uploadId", uploadId);
         form.append("chunkIndex", String(chunkIndex));
-        form.append("totalChunks", String(totalChunks));
         form.append("fileType", fileType);
-        if (hasYearMonth) {
-          form.append("year", String(year));
-          form.append("month", String(month));
-        }
 
         const res = await fetch("/api/admin/files", { method: "POST", body: form });
-
-        // Last chunk: server returns 202 immediately and processes in the background.
-        // Poll until the import record's status leaves "processing".
-        if (res.status === 202) {
-          const data = await res.json();
-          if (data.processing && data.fileId) {
-            setUploadProgress("Processing…");
-            const fileId = data.fileId as string;
-            let done = false;
-            while (!done) {
-              await new Promise((r) => setTimeout(r, 3000));
-              try {
-                const poll = await fetch("/api/admin/files");
-                if (poll.ok) {
-                  const { files } = await poll.json() as { files: ImportFile[] };
-                  const f = files.find((f) => f._id === fileId);
-                  if (f && f.status !== "processing") done = true;
-                }
-              } catch { /* ignore transient poll errors */ }
-            }
-          }
-          break; // last chunk sent — exit loop
-        }
-
         if (!res.ok) {
           let errorMsg = `Chunk ${chunkIndex + 1}/${totalChunks} failed (HTTP ${res.status})`;
           try {
@@ -149,6 +122,47 @@ function FileSection({
           return;
         }
       }
+
+      // All chunks stored — send a small metadata-only finalize request.
+      // This triggers assembly + import via after() and returns 202 immediately.
+      setUploadProgress("Processing…");
+      const finalizeForm = new FormData();
+      finalizeForm.append("uploadId", uploadId);
+      finalizeForm.append("finalize", "true");
+      finalizeForm.append("filename", selectedFile.name);
+      finalizeForm.append("fileType", fileType);
+      if (hasYearMonth) {
+        finalizeForm.append("year", String(year));
+        finalizeForm.append("month", String(month));
+      }
+
+      const finalizeRes = await fetch("/api/admin/files", { method: "POST", body: finalizeForm });
+      if (finalizeRes.status === 202) {
+        const data = await finalizeRes.json() as { processing: boolean; fileId: string };
+        if (data.processing && data.fileId) {
+          const fileId = data.fileId;
+          let done = false;
+          while (!done) {
+            await new Promise((r) => setTimeout(r, 3000));
+            try {
+              const poll = await fetch("/api/admin/files");
+              if (poll.ok) {
+                const { files } = await poll.json() as { files: ImportFile[] };
+                const f = files.find((f) => f._id === fileId);
+                if (f && f.status !== "processing") done = true;
+              }
+            } catch { /* ignore transient poll errors */ }
+          }
+        }
+      } else if (!finalizeRes.ok) {
+        let errorMsg = `Import failed (HTTP ${finalizeRes.status})`;
+        try { const d = await finalizeRes.json(); errorMsg = d.error ?? errorMsg; } catch { /* ignore */ }
+        setError(errorMsg);
+        setUploading(false);
+        setUploadProgress("");
+        return;
+      }
+
       setSelectedFile(null);
       onRefresh();
     } catch (err) {

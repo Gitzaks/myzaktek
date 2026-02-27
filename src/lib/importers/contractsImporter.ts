@@ -229,7 +229,8 @@ export async function importContracts(
   }
 
   // ── 4. Bulk upsert service records ────────────────────────────────────────
-  const srOps: object[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const srOps: any[] = [];
   for (const row of rows) {
     const status = contractStatus(row);
     if (status !== "active") continue;
