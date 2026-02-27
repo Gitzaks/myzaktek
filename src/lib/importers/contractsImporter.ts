@@ -29,7 +29,7 @@ const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
   "Ultimate with Interior": "both",
 };
 
-const BATCH = 1000;
+const BATCH = 5000;
 
 function parseDate(s: string | undefined): Date | null {
   if (!s || s.trim() === "" || s === "0000-00-00") return null;
@@ -208,19 +208,17 @@ export async function importContracts(
     errors.push(`Contract upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Count imported contracts
+  // Count imported = number of unique agreement IDs in the file (ordered:false means all succeed or are skipped)
   const allAgreementIds = [...new Set(rows.map(agreementId))];
-  let imported = 0;
-  for (let i = 0; i < allAgreementIds.length; i += 5000) {
-    imported += await Contract.countDocuments({
-      agreementId: { $in: allAgreementIds.slice(i, i + 5000) },
-    });
-  }
+  const imported = allAgreementIds.length;
 
-  // Build agreementId → contract _id for service records
+  // Build agreementId → contract _id — only needed for active contracts (service records)
+  const activeAgreementIds = [...new Set(
+    rows.filter((r) => contractStatus(r) === "active").map(agreementId)
+  )];
   const contractIdMap = new Map<string, unknown>();
-  for (let i = 0; i < allAgreementIds.length; i += 5000) {
-    const batch = allAgreementIds.slice(i, i + 5000);
+  for (let i = 0; i < activeAgreementIds.length; i += 5000) {
+    const batch = activeAgreementIds.slice(i, i + 5000);
     const contracts = await Contract.find(
       { agreementId: { $in: batch } },
       { agreementId: 1 }
