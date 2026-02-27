@@ -42,7 +42,7 @@ function normalizeAutoPointSheet(ws: XLSX.WorkSheet): Record<string, string>[] {
 
   let headerIdx = 0;
   for (let i = 0; i < Math.min(10, raw.length); i++) {
-    if ((raw[i] as unknown[]).some((c) => /^dme\b/i.test(String(c).trim()))) {
+    if ((raw[i] as unknown[]).some((c) => /^dme\b|^dealer\b/i.test(String(c).trim()))) {
       headerIdx = i;
       break;
     }
@@ -123,8 +123,6 @@ export async function runImport(
       if (!parsed) continue; // silently skip non-month tabs (e.g. "YTD Report")
       const sheetRows = normalizeAutoPointSheet(wb.Sheets[sheetName]);
       if (sheetRows.length === 0) continue;
-      // Temporary diagnostic — remove once column mapping is confirmed
-      if (sheetRows[0]) allErrors.push(`[${sheetName}] DEBUG columns: ${Object.keys(sheetRows[0]).join(" | ")}`);
       const result = await importAutoPoint(sheetRows, parsed.year, parsed.month);
       totalRecords  += result.recordsTotal;
       totalImported += result.recordsImported;

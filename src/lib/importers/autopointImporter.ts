@@ -31,7 +31,7 @@ export async function importAutoPoint(
 
   for (const row of rows) {
     try {
-      const dmeName = row["dme_name"]?.trim();
+      const dmeName = (row["dme_name"] ?? row["dealer_name"])?.trim();
       if (!dmeName) continue;
 
       const dealer = dealerMap.get(dmeName.toLowerCase());
