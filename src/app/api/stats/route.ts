@@ -4,7 +4,6 @@ import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
 import DealerMonthlyStats from "@/models/DealerMonthlyStats";
 import Contract from "@/models/Contract";
-import ServiceRecord from "@/models/ServiceRecord";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -32,22 +31,15 @@ export async function GET(req: NextRequest) {
 
   const dealerObjId = new mongoose.Types.ObjectId(dealerId);
 
-  const [monthlyStats, activeCustomers, remindersThisMonth, monthlySales, contractPriceAgg] = await Promise.all([
+  const [monthlyStats, activeCustomers, activeContracts, latestMonthStat, contractPriceAgg] = await Promise.all([
     DealerMonthlyStats.find({ dealerId, year }).sort({ month: 1 }).lean(),
     Contract.countDocuments({ dealerId, status: "active" }),
-    ServiceRecord.countDocuments({
-      dealerId,
-      scheduledDate: {
-        $gte: new Date(currentYear, new Date().getMonth(), 1),
-      },
-      status: "scheduled",
-    }),
-    Contract.countDocuments({
-      dealerId,
-      purchaseDate: {
-        $gte: new Date(currentYear, new Date().getMonth(), 1),
-      },
-    }),
+    // For Reminders This Month: walk each active contract's 6-month schedule
+    Contract.find({ dealerId: dealerObjId, status: "active" }, { beginsAt: 1 }).lean(),
+    // Monthly Sales: exteriorUnits from the most recent ZIE data for this dealer
+    DealerMonthlyStats.findOne({ dealerId }, { "stats.exteriorUnits": 1 })
+      .sort({ year: -1, month: -1 })
+      .lean(),
     Contract.aggregate<{ avgSalePrice: number; avgInternalCost: number }>([
       {
         $match: {
@@ -64,6 +56,26 @@ export async function GET(req: NextRequest) {
       },
     ]),
   ]);
+
+  // Reminders This Month — contracts with a 6-month anniversary in the current calendar month
+  const currY = currentYear;
+  const currM = new Date().getMonth(); // 0-based
+  const loopCutoff = new Date(currY, currM + 1, 0); // last day of current month
+  let remindersThisMonth = 0;
+  for (const c of activeContracts) {
+    const begin = new Date(c.beginsAt);
+    const d = new Date(begin);
+    while (d <= loopCutoff) {
+      if (d > begin && d.getFullYear() === currY && d.getMonth() === currM) {
+        remindersThisMonth++;
+        break;
+      }
+      d.setMonth(d.getMonth() + 6);
+    }
+  }
+
+  // Monthly Sales — exterior units from the most recent month with ZIE data
+  const monthlySales = latestMonthStat?.stats.exteriorUnits ?? 0;
 
   // Aggregate YTD totals from monthly stats
   const ytd = monthlyStats.reduce(
