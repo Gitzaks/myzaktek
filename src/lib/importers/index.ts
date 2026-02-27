@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { Readable } from "stream";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import type { IImportFileDocument } from "@/models/ImportFile";
@@ -99,6 +100,62 @@ function parseSheetDate(name: string, fallbackYear?: number): { year: number; mo
   return { year, month };
 }
 
+// ── Async CSV parser ─────────────────────────────────────────────────────────
+
+/**
+ * Parse a CSV buffer without first converting it to a JS string.
+ * Pushes 64 KB chunks through a Node.js Readable with a setImmediate gap
+ * between each chunk so the event loop stays free during the entire parse —
+ * this lets SSE data flush to the TCP socket and lets setInterval heartbeats
+ * fire instead of blocking for the whole duration of a large-file parse.
+ */
+function parseCsvBufferAsync(buffer: Buffer): Promise<Record<string, string>[]> {
+  return new Promise<Record<string, string>[]>((resolve, reject) => {
+    const rows: Record<string, string>[] = [];
+
+    // Strip UTF-8 BOM if present
+    const raw =
+      buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf
+        ? buffer.slice(3)
+        : buffer;
+
+    // A Readable that emits 64 KB chunks with a setImmediate gap between
+    // each push, so Node.js can flush SSE events and run timers between chunks.
+    const CHUNK = 64 * 1024;
+    const source = new Readable({ read() {} });
+    let offset = 0;
+    const pushNext = () => {
+      if (offset >= raw.length) { source.push(null); return; }
+      source.push(raw.slice(offset, Math.min(offset + CHUNK, raw.length)));
+      offset += CHUNK;
+      setImmediate(pushNext);
+    };
+    process.nextTick(pushNext);
+
+    // PapaParse detects a Node.js Readable and processes it asynchronously.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Papa.parse(source as any, {
+      header: true,
+      skipEmptyLines: true,
+      step(result) {
+        const row = result.data as Record<string, string>;
+        const normalized: Record<string, string> = {};
+        for (const [key, value] of Object.entries(row)) {
+          const k = key
+            .replace(/^\uFEFF/, "")
+            .trim()
+            .toLowerCase()
+            .replace(/[\s\-]+/g, "_");
+          normalized[k] = value as string;
+        }
+        rows.push(normalized);
+      },
+      complete: () => resolve(rows),
+      error:    (err: Error) => reject(err),
+    });
+  });
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 export async function runImport(
@@ -165,19 +222,11 @@ export async function runImport(
     const wb = XLSX.read(buffer, { type: "buffer" });
     rows.push(...normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]));
   } else {
-    const csvText = buffer.toString("utf-8").replace(/^\uFEFF/, "");
-    const parsed = Papa.parse<Record<string, string>>(csvText, {
-      header: true,
-      skipEmptyLines: true,
-    }) as Papa.ParseResult<Record<string, string>>;
-    for (const row of parsed.data) {
-      const normalized: Record<string, string> = {};
-      for (const [key, value] of Object.entries(row)) {
-        const k = key.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s\-]+/g, "_");
-        normalized[k] = value as string;
-      }
-      rows.push(normalized);
-    }
+    // Async streaming parse — does NOT block the event loop (see parseCsvBufferAsync above).
+    await onProgress?.(0, 0, "Parsing file…");
+    const parsed = await parseCsvBufferAsync(buffer);
+    rows.push(...parsed);
+    await onProgress?.(0, rows.length, "File parsed, starting import…");
   }
 
   switch (importFile.fileType) {

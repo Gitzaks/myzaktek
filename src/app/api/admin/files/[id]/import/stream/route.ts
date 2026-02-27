@@ -75,6 +75,9 @@ export async function GET(
         await importFile.save();
 
         send({ type: "start" });
+        // Yield so the start event is flushed to the TCP socket before
+        // any blocking work begins inside runImport.
+        await new Promise<void>((r) => setImmediate(r));
 
         const result = await runImport(
           importFile,
@@ -89,6 +92,9 @@ export async function GET(
                 pct: total > 0 ? Math.round((processed / total) * 100) : 0,
                 message: message ?? `Processing ${processed.toLocaleString()} / ${total.toLocaleString()} rows`,
               });
+              // Yield so each progress event is flushed before the next
+              // MongoDB operation starts.
+              await new Promise<void>((r) => setImmediate(r));
             }
             // Throttle DB saves to every 5 seconds
             importFile.processedRows = processed;
