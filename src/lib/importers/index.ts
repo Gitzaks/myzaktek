@@ -285,9 +285,20 @@ export async function runImport(
     rows = normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]);
   } else {
     // Async streaming parse — does NOT block the event loop (see parseCsvBufferAsync above).
-    // ZAKCNTRCTS exports have no header row — pass positional column names.
     await onProgress?.(0, 0, "Parsing file…");
-    const csvColumns = importFile.fileType === "contracts" ? ZAKCNTRCTS_COLUMNS : undefined;
+
+    let csvColumns: readonly string[] | undefined;
+    if (importFile.fileType === "contracts") {
+      // Auto-detect whether the file has a header row.
+      // Files exported from the AutoPoint generate route include headers that
+      // match the ZAKCNTRCTS column names exactly (company_code, dealer_code, …).
+      // Raw ZAK exports have no header row at all — use positional mapping.
+      // Peek at the first 512 bytes to check for known header keywords.
+      const firstLine = buffer.slice(0, 512).toString("utf-8").split(/\r?\n/)[0];
+      const hasHeaders = /\b(company_code|dealer_code|agreement_suffix)\b/i.test(firstLine);
+      csvColumns = hasHeaders ? undefined : ZAKCNTRCTS_COLUMNS;
+    }
+
     rows = await parseCsvBufferAsync(buffer, csvColumns);
     await onProgress?.(0, rows.length, "File parsed, starting import…");
   }
