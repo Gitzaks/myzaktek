@@ -2,16 +2,25 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
 import Contract from "@/models/Contract";
+import Vehicle from "@/models/Vehicle";
 import AutoPointExport from "@/models/AutoPointExport";
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
 import Papa from "papaparse";
-
-const UPLOAD_DIR = join(process.cwd(), "uploads", "autopoint");
 
 /**
  * Generates an AutoPoint mailer CSV.
- * Finds all active customers whose 6-month service reminder is due this month.
+ *
+ * Includes all active contracts where the customer's 6-month re-application
+ * is due in the CURRENT calendar month.
+ *
+ * Columns match the AutoPoint / ZAKCNTRCTS format exactly:
+ * company_code, dealer_code, dealer_name, dealer_address_1, dealer_address_2,
+ * dealer_city, dealer_state, dealer_zip_code, dealer_phone, status_code,
+ * agreement, agreement_suffix, owner_last_name, owner_first_name,
+ * owner_address_1, owner_address_2, owner_city, owner_state, owner_zip_code,
+ * owner_phone, coverage, coverage_option, coverage_months, coverage_miles,
+ * expiration_mileage, deductible, vehicle_year, vin, beginning_mileage,
+ * vehicle_maker, model_code, series_name, contract_purchase_date,
+ * cancel_post_date, expiration_date, posted_date, email_address
  */
 export async function POST() {
   const session = await auth();
@@ -22,67 +31,134 @@ export async function POST() {
   await connectDB();
 
   const now = new Date();
+  // First day of the CURRENT month — used to check if a 6-month anniversary falls this month
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const thisMonthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0); // last day
 
-  // Find active contracts — customers due for their 6-month reapplication
+  // Load all active contracts with customer and dealer populated
   const contracts = await Contract.find({ status: "active" })
     .populate("customerId", "name email phone address city state zip")
     .populate("dealerId", "name dealerCode address city state zip phone")
     .lean();
 
-  // Find customers whose 6-month re-application is due NEXT month.
-  // We send the mailer one month early so customers receive it before they're due.
-  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  // Filter to contracts where a 6-month application anniversary falls in the current month
   const dueContracts = contracts.filter((c) => {
     const begin = new Date(c.beginsAt);
-    const monthsUntilNext =
-      (next.getFullYear() - begin.getFullYear()) * 12 + (next.getMonth() - begin.getMonth());
-    return monthsUntilNext > 0 && monthsUntilNext % 6 === 0;
+    // Check every 6-month mark from begin date — if any lands in this month, include it
+    const d = new Date(begin);
+    while (d <= thisMonthEnd) {
+      if (
+        d.getFullYear() === thisMonthStart.getFullYear() &&
+        d.getMonth() === thisMonthStart.getMonth() &&
+        d > begin // skip the first application (month 0)
+      ) {
+        return true;
+      }
+      d.setMonth(d.getMonth() + 6);
+    }
+    return false;
   });
+
+  // Bulk-load vehicles by VIN for all due contracts
+  const vins = [...new Set(dueContracts.map((c) => c.vin).filter(Boolean))] as string[];
+  const vehicleList = await Vehicle.find({ vin: { $in: vins } }).lean();
+  const vehicleMap = new Map(vehicleList.map((v) => [v.vin, v]));
 
   // Build CSV rows
   const rows = dueContracts.map((c) => {
-    const customer = c.customerId as unknown as Record<string, string> | null;
-    const dealer = c.dealerId as unknown as Record<string, string> | null;
+    const customer = c.customerId as Record<string, string> | null;
+    const dealer   = c.dealerId   as Record<string, string> | null;
+    const vehicle  = c.vin ? vehicleMap.get(c.vin) : undefined;
+
+    // Split "First Last" → first name / last name
+    const nameParts = (customer?.name ?? "").trim().split(/\s+/);
+    const lastName  = nameParts.length > 1 ? nameParts[nameParts.length - 1] : nameParts[0] ?? "";
+    const firstName = nameParts.length > 1 ? nameParts.slice(0, -1).join(" ") : "";
+
+    // Split agreementId "86119226-A" → agreement + suffix
+    const [agreement, ...suffixParts] = (c.agreementId ?? "").split("-");
+    const agreementSuffix = suffixParts.join("-");
+
+    // Coverage months = full term between purchase and expiration
+    const beginDate = new Date(c.beginsAt);
+    const endDate   = new Date(c.endsAt);
+    const coverageMonths =
+      (endDate.getFullYear() - beginDate.getFullYear()) * 12 +
+      (endDate.getMonth() - beginDate.getMonth());
+
+    // Email — suppress internal placeholder addresses
+    const email = (customer?.email ?? "").includes("@noemail.zaktek.com")
+      ? ""
+      : (customer?.email ?? "");
+
     return {
-      AgreementID: c.agreementId,
-      CustomerName: customer?.name ?? "",
-      Email: customer?.email ?? "",
-      Phone: customer?.phone ?? "",
-      Address: customer?.address ?? "",
-      City: customer?.city ?? "",
-      State: customer?.state ?? "",
-      Zip: customer?.zip ?? "",
-      Plan: c.plan,
-      BeginsAt: c.beginsAt,
-      EndsAt: c.endsAt,
-      DealerName: dealer?.name ?? "",
-      DealerCode: dealer?.dealerCode ?? "",
-      DealerAddress: dealer?.address ?? "",
-      DealerCity: dealer?.city ?? "",
-      DealerState: dealer?.state ?? "",
-      DealerPhone: dealer?.phone ?? "",
+      company_code:           "ZAK",
+      dealer_code:            dealer?.dealerCode ?? "",
+      dealer_name:            dealer?.name ?? "",
+      dealer_address_1:       dealer?.address ?? "",
+      dealer_address_2:       "",
+      dealer_city:            dealer?.city ?? "",
+      dealer_state:           dealer?.state ?? "",
+      dealer_zip_code:        dealer?.zip ?? "",
+      dealer_phone:           dealer?.phone ?? "",
+      status_code:            "A",
+      agreement:              agreement ?? "",
+      agreement_suffix:       agreementSuffix,
+      owner_last_name:        lastName,
+      owner_first_name:       firstName,
+      owner_address_1:        customer?.address ?? "",
+      owner_address_2:        "",
+      owner_city:             customer?.city ?? "",
+      owner_state:            customer?.state ?? "",
+      owner_zip_code:         customer?.zip ?? "",
+      owner_phone:            customer?.phone ?? "",
+      coverage:               c.plan ?? "",
+      coverage_option:        c.planCode ?? c.plan ?? "",
+      coverage_months:        coverageMonths || "",
+      coverage_miles:         c.maxMileage ?? "",
+      expiration_mileage:     c.maxMileage ?? "",
+      deductible:             c.deductible ?? 0,
+      vehicle_year:           vehicle?.year ?? "",
+      vin:                    c.vin ?? "",
+      beginning_mileage:      c.beginMileage ?? "",
+      vehicle_maker:          vehicle?.make ?? "",
+      model_code:             vehicle?.vehicleModel ?? "",
+      series_name:            vehicle?.vehicleModel ?? "",
+      contract_purchase_date: fmtDate(c.purchaseDate),
+      cancel_post_date:       "",
+      expiration_date:        fmtDate(c.endsAt),
+      posted_date:            fmtDate(c.purchaseDate),
+      email_address:          email,
     };
   });
 
   const csv = Papa.unparse(rows);
+  const fileData = Buffer.from(csv, "utf-8");
 
-  // Generate filename: AP-YYYYMMDDHHMMSS.csv
-  const ts = now
-    .toISOString()
-    .replace(/[-:T]/g, "")
-    .replace(/\..+/, "");
+  // Filename: AP-YYYYMMDDHHMMSS.csv
+  const ts = now.toISOString().replace(/[-:T]/g, "").replace(/\..+/, "");
   const filename = `AP-${ts}.csv`;
-
-  await mkdir(UPLOAD_DIR, { recursive: true });
-  const storagePath = join(UPLOAD_DIR, filename);
-  await writeFile(storagePath, csv, "utf-8");
 
   const record = await AutoPointExport.create({
     filename,
     generatedBy: session.user.id,
     recordCount: rows.length,
-    storagePath,
+    storagePath: `mongodb:${filename}`, // filesystem no longer used on Vercel
+    fileData,
   });
 
-  return NextResponse.json(record, { status: 201 });
+  return NextResponse.json(
+    { _id: record._id, filename: record.filename, recordCount: record.recordCount, createdAt: record.createdAt },
+    { status: 201 }
+  );
+}
+
+function fmtDate(d: Date | string | null | undefined): string {
+  if (!d) return "";
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return "";
+  const mm   = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd   = String(dt.getDate()).padStart(2, "0");
+  const yyyy = dt.getFullYear();
+  return `${mm}/${dd}/${yyyy}`;
 }

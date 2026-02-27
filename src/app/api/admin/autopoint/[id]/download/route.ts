@@ -19,7 +19,17 @@ export async function GET(
   const record = await AutoPointExport.findById(id);
   if (!record) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const buffer = await readFile(record.storagePath);
+  // Prefer MongoDB-stored data; fall back to disk for legacy records
+  let buffer: Buffer;
+  if (record.fileData && record.fileData.length > 0) {
+    buffer = Buffer.from(record.fileData);
+  } else {
+    try {
+      buffer = await readFile(record.storagePath);
+    } catch {
+      return NextResponse.json({ error: "File data not available — please regenerate." }, { status: 404 });
+    }
+  }
 
   return new NextResponse(buffer, {
     headers: {

@@ -5,6 +5,7 @@ export interface IAutoPointExportDocument extends Document {
   generatedBy: mongoose.Types.ObjectId;
   recordCount: number;
   storagePath: string;
+  fileData?: Buffer;           // CSV stored in MongoDB (Vercel has no persistent filesystem)
   createdAt: Date;
 }
 
@@ -14,6 +15,7 @@ const AutoPointExportSchema = new Schema<IAutoPointExportDocument>(
     generatedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     recordCount: { type: Number, required: true, default: 0 },
     storagePath: { type: String, required: true },
+    fileData: { type: Buffer },
   },
   { timestamps: true }
 );
