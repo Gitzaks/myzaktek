@@ -29,16 +29,18 @@ export async function importDealers(
       const dmeDealer        = (row["dme_dealer"]        ?? "").trim() || undefined;
       const zakCntrtsDealer  = (row["zakcntrcts_dealer"] ?? "").trim() || undefined;
 
-      // dealer_name is optional in the master file; only update it when the CSV
-      // explicitly provides it — otherwise preserve whatever name is already stored.
+      // Name priority: explicit dealer_name column > zakcntrcts_dealer column > preserve existing.
+      // Using zakCntrtsDealer as the default source means a plain re-import of the
+      // Dealer Master file is enough to repair names that were previously set to dealerCode.
       const nameFromCSV = (row["dealer_name"] ?? row["dealername"] ?? "").trim();
+      const bestName    = nameFromCSV || zakCntrtsDealer; // undefined when both are absent
 
       await Dealer.findOneAndUpdate(
         { dealerCode },
         {
           $set: {
             dealerCode,
-            ...(nameFromCSV && { name: nameFromCSV }),
+            ...(bestName && { name: bestName }),
             ...(combineWith     !== undefined && { combineWith }),
             ...(zieDealer       !== undefined && { zieDealer }),
             ...(unitsDealer     !== undefined && { unitsDealer }),
@@ -47,6 +49,8 @@ export async function importDealers(
             ...(zakCntrtsDealer !== undefined && { zakCntrtsDealer }),
           },
           $setOnInsert: {
+            // For brand-new records only: use best name or fall back to dealerCode
+            ...(bestName ? {} : { name: dealerCode }),
             email: `${dealerCode.toLowerCase()}@dealers.zaktek.com`,
             address: "",
             city: "",

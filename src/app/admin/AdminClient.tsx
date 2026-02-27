@@ -438,6 +438,8 @@ function AutoPointSection({ exports, onRefresh }: { exports: AutoPointExport[]; 
 export default function AdminClient() {
   const [files, setFiles] = useState<ImportFile[]>([]);
   const [apExports, setApExports] = useState<AutoPointExport[]>([]);
+  const [fixingNames, setFixingNames] = useState(false);
+  const [fixNamesResult, setFixNamesResult] = useState("");
 
   const refresh = useCallback(async () => {
     const [filesRes, apRes] = await Promise.all([
@@ -451,6 +453,19 @@ export default function AdminClient() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  async function fixDealerNames() {
+    setFixingNames(true);
+    setFixNamesResult("");
+    try {
+      const res = await fetch("/api/admin/migrate/fix-dealer-names", { method: "POST" });
+      const data = await res.json();
+      setFixNamesResult(data.message ?? (res.ok ? "Done." : "Failed."));
+    } catch {
+      setFixNamesResult("Network error.");
+    }
+    setFixingNames(false);
+  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -470,6 +485,19 @@ export default function AdminClient() {
           >
             Create a Dealership
           </a>
+        </div>
+        {/* One-time migration: fix dealer names that were set to dealer codes */}
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={fixDealerNames}
+            disabled={fixingNames}
+            className="bg-orange-600 text-white font-medium px-6 py-2 rounded hover:bg-orange-700 disabled:opacity-50 text-sm"
+          >
+            {fixingNames ? "Fixing…" : "Fix Dealer Names"}
+          </button>
+          {fixNamesResult && (
+            <span className="text-sm text-gray-600">{fixNamesResult}</span>
+          )}
         </div>
       </div>
 
