@@ -347,6 +347,7 @@ function FileSection({
 
   async function handleUpload() {
     if (!selectedFile) return;
+    if (error) return; // blocked by type-mismatch or date error
     if (hasYearMonth && !parsedDate) {
       setError("Could not detect month/year from filename. Rename the file to include YYYYMM (e.g. FILE_202501.csv).");
       return;
@@ -483,9 +484,15 @@ function FileSection({
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
                 setSelectedFile(f);
-                if (f && hasYearMonth) {
-                  setParsedDate(parseYearMonthFromFilename(f.name));
-                  setError("");
+                setError("");
+                if (f) {
+                  if (hasYearMonth) setParsedDate(parseYearMonthFromFilename(f.name));
+                  const detected = parseFileTypeFromFilename(f.name);
+                  if (detected && detected !== fileType) {
+                    setError(
+                      `Wrong file: "${f.name}" looks like a ${FILE_TYPE_LABELS[detected]} file. This section is for ${FILE_TYPE_LABELS[fileType]} files.`
+                    );
+                  }
                 }
               }}
             />
@@ -502,7 +509,7 @@ function FileSection({
               </span>
               <button
                 onClick={handleUpload}
-                disabled={uploading}
+                disabled={uploading || !!error}
                 className="bg-[#1565a8] text-white px-3 py-1 rounded text-sm hover:bg-[#0f4f8a] disabled:opacity-50"
               >
                 {uploading
