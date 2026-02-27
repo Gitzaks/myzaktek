@@ -14,6 +14,7 @@ interface ImportFile {
   recordsTotal?: number;
   recordsImported?: number;
   errorMessage?: string;
+  importErrors?: string[];
   createdAt: string;
 }
 
@@ -76,6 +77,7 @@ function FileSection({
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [showErrorsId, setShowErrorsId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   async function handleUpload() {
@@ -240,7 +242,24 @@ function FileSection({
                         : "Pending"}
                     </span>
                     {f.errorMessage && (
-                      <div className="text-xs text-red-400 mt-0.5">{f.errorMessage}</div>
+                      <div className="text-xs text-red-400 mt-0.5">
+                        {f.errorMessage}
+                        {f.importErrors && f.importErrors.length > 0 && (
+                          <button
+                            onClick={() => setShowErrorsId(showErrorsId === f._id ? null : f._id)}
+                            className="ml-2 underline text-red-500 hover:text-red-700"
+                          >
+                            {showErrorsId === f._id ? "Hide" : "View"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {showErrorsId === f._id && f.importErrors && (
+                      <div className="text-left mt-1 max-h-40 overflow-y-auto bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700 space-y-0.5">
+                        {f.importErrors.map((e, i) => (
+                          <div key={i}>{e}</div>
+                        ))}
+                      </div>
                     )}
                   </td>
                   <td className="px-4 py-2 text-center">

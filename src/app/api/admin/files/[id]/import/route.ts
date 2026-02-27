@@ -30,9 +30,9 @@ export async function POST(
     importFile.status = "imported";
     importFile.recordsImported = result.recordsImported;
     importFile.recordsTotal = result.recordsTotal;
-    // Surface row-level errors so admin can see what failed
+    importFile.importErrors = result.errors ?? [];
     if (result.errors && result.errors.length > 0) {
-      importFile.errorMessage = result.errors.slice(0, 5).join(" | ");
+      importFile.errorMessage = `${result.errors.length} row(s) failed`;
     } else {
       importFile.errorMessage = undefined;
     }
