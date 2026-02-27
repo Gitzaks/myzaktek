@@ -18,6 +18,7 @@ export interface IDealerDocument extends Document {
   unitsDealer?: string;         // name as it appears in Units files ("Combined" = not in this report)
   billingDealer?: string;       // name as it appears in Billing files ("Combined" = not in this report)
   dmeDealer?: string;           // name as it appears in AutoPoint/DME files ("Combined" = not in this report)
+  dmeAliases?: string[];        // additional AutoPoint names that roll up to this dealer
   zakCntrtsDealer?: string;     // name as it appears in ZAKCNTRCTS files
   // Customer-facing fields
   serviceUrl?: string;          // Service scheduling URL ("Visit Dealership Website")
@@ -50,6 +51,7 @@ const DealerSchema = new Schema<IDealerDocument>(
     unitsDealer: { type: String },
     billingDealer: { type: String },
     dmeDealer: { type: String },
+    dmeAliases: { type: [String] },
     zakCntrtsDealer: { type: String },
     serviceUrl: { type: String },
     logoUrl: { type: String },

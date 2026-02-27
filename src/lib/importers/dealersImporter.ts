@@ -88,3 +88,41 @@ export async function importDealers(
 
   return { recordsTotal: rows.length, recordsImported: imported, errors: errors.length > 0 ? errors : undefined };
 }
+
+/**
+ * AutoPoint Rollup tab — columns: autopoint_dealer, combine
+ *
+ * For each row, registers the AutoPoint dealer name as an alias on the target
+ * dealer (identified by the combine dealer code). When importing AutoPoint
+ * data any name in dmeAliases resolves to the parent dealer, so the stats
+ * are accumulated under one dealer record.
+ */
+export async function importAutoPointRollup(
+  rows: Record<string, string>[]
+): Promise<ImportResult> {
+  let imported = 0;
+  const errors: string[] = [];
+
+  for (const row of rows) {
+    try {
+      const apName     = (row["autopoint_dealer"] ?? "").trim();
+      const targetCode = (row["combine"]          ?? "").trim();
+      if (!apName || !targetCode) continue;
+
+      const result = await Dealer.findOneAndUpdate(
+        { dealerCode: targetCode },
+        { $addToSet: { dmeAliases: apName } }
+      );
+      if (!result) {
+        errors.push(`No dealer with code "${targetCode}" (AutoPoint name "${apName}")`);
+        continue;
+      }
+      imported++;
+    } catch (err) {
+      if (errors.length < 20)
+        errors.push(`Row ${imported + errors.length + 1}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { recordsTotal: rows.length, recordsImported: imported, errors: errors.length > 0 ? errors : undefined };
+}

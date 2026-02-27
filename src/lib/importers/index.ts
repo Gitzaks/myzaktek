@@ -8,7 +8,7 @@ import { importZIE } from "./zieImporter";
 import { importBilling } from "./billingImporter";
 import { importAutoPoint } from "./autopointImporter";
 import { importContracts } from "./contractsImporter";
-import { importDealers } from "./dealersImporter";
+import { importDealers, importAutoPointRollup } from "./dealersImporter";
 
 export interface ImportResult {
   recordsTotal: number;
@@ -132,6 +132,28 @@ export async function runImport(
     return {
       recordsTotal:    totalRecords,
       recordsImported: totalImported,
+      errors: allErrors.length > 0 ? allErrors : undefined,
+    };
+  }
+
+  // ── Dealer Master xlsx: main sheet + optional AutoPoint rollup tab ────────
+  if (isExcel && importFile.fileType === "dealers") {
+    const wb = XLSX.read(buffer, { type: "buffer" });
+    const mainRows   = normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]);
+    const mainResult = await importDealers(mainRows);
+
+    const apTabName = wb.SheetNames.find((n) => /autopoint/i.test(n));
+    if (!apTabName) return mainResult;
+
+    const apRows   = normalizeExcelSheet(wb.Sheets[apTabName]);
+    const apResult = await importAutoPointRollup(apRows);
+    const allErrors = [
+      ...(mainResult.errors ?? []),
+      ...(apResult.errors?.map((e) => `[AutoPoint Rollup] ${e}`) ?? []),
+    ];
+    return {
+      recordsTotal:    mainResult.recordsTotal    + apResult.recordsTotal,
+      recordsImported: mainResult.recordsImported + apResult.recordsImported,
       errors: allErrors.length > 0 ? allErrors : undefined,
     };
   }
