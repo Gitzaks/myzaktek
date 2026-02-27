@@ -109,12 +109,31 @@ function FileSection({
           form.append("month", String(month));
         }
 
-        // Last chunk triggers import on the server — may take longer
-        if (chunkIndex === totalChunks - 1) {
-          setUploadProgress("Importing…");
+        const res = await fetch("/api/admin/files", { method: "POST", body: form });
+
+        // Last chunk: server returns 202 immediately and processes in the background.
+        // Poll until the import record's status leaves "processing".
+        if (res.status === 202) {
+          const data = await res.json();
+          if (data.processing && data.fileId) {
+            setUploadProgress("Processing…");
+            const fileId = data.fileId as string;
+            let done = false;
+            while (!done) {
+              await new Promise((r) => setTimeout(r, 3000));
+              try {
+                const poll = await fetch("/api/admin/files");
+                if (poll.ok) {
+                  const { files } = await poll.json() as { files: ImportFile[] };
+                  const f = files.find((f) => f._id === fileId);
+                  if (f && f.status !== "processing") done = true;
+                }
+              } catch { /* ignore transient poll errors */ }
+            }
+          }
+          break; // last chunk sent — exit loop
         }
 
-        const res = await fetch("/api/admin/files", { method: "POST", body: form });
         if (!res.ok) {
           let errorMsg = `Chunk ${chunkIndex + 1}/${totalChunks} failed (HTTP ${res.status})`;
           try {

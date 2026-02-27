@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
@@ -69,16 +70,7 @@ export async function POST(req: NextRequest) {
       const year = formData.get("year") ? Number(formData.get("year")) : undefined;
       const month = formData.get("month") ? Number(formData.get("month")) : undefined;
 
-      // Retrieve all chunks from MongoDB in order and assemble.
-      // Do NOT use .lean() — lean returns Buffer fields as BSON Binary objects, which
-      // Buffer.concat cannot read correctly, resulting in a silent empty buffer.
-      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 });
-      const assembledBuffer = Buffer.concat(chunks.map((c) => c.data));
-      await ChunkBuffer.deleteMany({ uploadId });
-
-      // Create ImportFile record and run import with assembled buffer.
-      // Don't store fileData here — the assembled buffer can exceed MongoDB's 16MB
-      // document limit for large files; the buffer is passed directly to runImport.
+      // Create the ImportFile record immediately so the client can poll it.
       const importFile = await ImportFile.create({
         filename,
         fileType,
@@ -89,24 +81,38 @@ export async function POST(req: NextRequest) {
         storagePath: `mongodb-chunk:${uploadId}`,
       });
 
-      try {
-        const result = await runImport(importFile, assembledBuffer);
-        importFile.status = "imported";
-        importFile.recordsImported = result.recordsImported;
-        importFile.recordsTotal = result.recordsTotal;
-        importFile.importErrors = result.errors ?? [];
-        if (result.errors && result.errors.length > 0) {
-          importFile.errorMessage = `${result.errors.length} row(s) failed`;
-        } else {
-          importFile.errorMessage = undefined;
-        }
-      } catch (err) {
-        importFile.status = "import_failed";
-        importFile.errorMessage = err instanceof Error ? err.message : "Unknown error";
-      }
-      await importFile.save();
+      // Use after() to assemble + import after the 202 response is sent.
+      // This avoids holding the HTTP connection open for minutes while processing
+      // a large file, which causes Vercel to return a 405 on timeout.
+      after(async () => {
+        try {
+          await connectDB();
+          const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 });
+          const assembledBuffer = Buffer.concat(chunks.map((c) => c.data));
+          await ChunkBuffer.deleteMany({ uploadId });
 
-      return NextResponse.json(importFile, { status: 201 });
+          const result = await runImport(importFile, assembledBuffer);
+          importFile.status = "imported";
+          importFile.recordsImported = result.recordsImported;
+          importFile.recordsTotal = result.recordsTotal;
+          importFile.importErrors = result.errors ?? [];
+          if (result.errors && result.errors.length > 0) {
+            importFile.errorMessage = `${result.errors.length} row(s) failed`;
+          } else {
+            importFile.errorMessage = undefined;
+          }
+        } catch (err) {
+          importFile.status = "import_failed";
+          importFile.errorMessage = err instanceof Error ? err.message : "Unknown error";
+        }
+        await importFile.save();
+      });
+
+      // Return immediately — client polls GET /api/admin/files until status changes.
+      return NextResponse.json(
+        { processing: true, fileId: String(importFile._id) },
+        { status: 202 }
+      );
     }
 
     // Legacy non-chunked path — send full file in one request
