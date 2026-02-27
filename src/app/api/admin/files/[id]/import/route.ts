@@ -30,7 +30,12 @@ export async function POST(
     importFile.status = "imported";
     importFile.recordsImported = result.recordsImported;
     importFile.recordsTotal = result.recordsTotal;
-    importFile.errorMessage = undefined;
+    // Surface row-level errors so admin can see what failed
+    if (result.errors && result.errors.length > 0) {
+      importFile.errorMessage = result.errors.slice(0, 5).join(" | ");
+    } else {
+      importFile.errorMessage = undefined;
+    }
   } catch (err) {
     importFile.status = "import_failed";
     importFile.errorMessage = err instanceof Error ? err.message : "Unknown error";

@@ -12,6 +12,7 @@ export async function importZIE(
   month: number
 ): Promise<ImportResult> {
   let imported = 0;
+  const errors: string[] = [];
 
   for (const row of rows) {
     try {
@@ -40,12 +41,13 @@ export async function importZIE(
       );
 
       imported++;
-    } catch {
+    } catch (err) {
+      if (errors.length < 20) errors.push(`Row ${imported + errors.length + 1}: ${err instanceof Error ? err.message : String(err)}`);
       // skip bad row
     }
   }
 
-  return { recordsTotal: rows.length, recordsImported: imported };
+  return { recordsTotal: rows.length, recordsImported: imported, errors: errors.length > 0 ? errors : undefined };
 }
 
 function parseNum(val: string | undefined): number {

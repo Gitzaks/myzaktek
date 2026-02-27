@@ -13,20 +13,22 @@ export async function importUnits(
   month: number
 ): Promise<ImportResult> {
   let imported = 0;
+  const errors: string[] = [];
 
   // Load all dealers once for name matching
   const allDealers = await Dealer.find({ active: true });
 
   for (const row of rows) {
     try {
-      const dealerName = row["Dealership"]?.trim();
+      // Keys are normalized to lowercase by the CSV parser in index.ts
+      const dealerName = row["dealership"]?.trim();
       if (!dealerName) continue;
 
       const dealer = findDealerByName(allDealers, dealerName);
       if (!dealer) continue;
 
-      const newUnits = parseNum(row["newUnits"]);
-      const usedUnits = parseNum(row["usedUnits"]);
+      const newUnits = parseNum(row["newunits"]);
+      const usedUnits = parseNum(row["usedunits"]);
       const units = parseNum(row["units"]) || newUnits + usedUnits;
 
       await DealerMonthlyStats.findOneAndUpdate(
@@ -42,12 +44,13 @@ export async function importUnits(
       );
 
       imported++;
-    } catch {
+    } catch (err) {
+      if (errors.length < 20) errors.push(`Row ${imported + errors.length + 1}: ${err instanceof Error ? err.message : String(err)}`);
       // skip bad row
     }
   }
 
-  return { recordsTotal: rows.length, recordsImported: imported };
+  return { recordsTotal: rows.length, recordsImported: imported, errors: errors.length > 0 ? errors : undefined };
 }
 
 function normalizeName(name: string): string {

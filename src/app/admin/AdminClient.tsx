@@ -107,6 +107,11 @@ function FileSection({
           form.append("month", String(month));
         }
 
+        // Last chunk triggers import on the server — may take longer
+        if (chunkIndex === totalChunks - 1) {
+          setUploadProgress("Importing…");
+        }
+
         const res = await fetch("/api/admin/files", { method: "POST", body: form });
         if (!res.ok) {
           let errorMsg = `Chunk ${chunkIndex + 1}/${totalChunks} failed (HTTP ${res.status})`;
@@ -180,7 +185,13 @@ function FileSection({
                 disabled={uploading}
                 className="bg-[#1565a8] text-white px-3 py-1 rounded text-sm hover:bg-[#0f4f8a] disabled:opacity-50"
               >
-                {uploading ? (uploadProgress ? `Uploading… (${uploadProgress})` : "Uploading…") : "Upload"}
+                {uploading
+                  ? uploadProgress === "Importing…"
+                    ? "Importing…"
+                    : uploadProgress
+                      ? `Uploading… (${uploadProgress})`
+                      : "Uploading…"
+                  : "Upload"}
               </button>
             </>
           )}

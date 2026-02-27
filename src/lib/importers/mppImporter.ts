@@ -10,6 +10,7 @@ import type { ImportResult } from "./index";
  */
 export async function importMPP(rows: Record<string, string>[]): Promise<ImportResult> {
   let imported = 0;
+  const errors: string[] = [];
 
   for (const row of rows) {
     try {
@@ -68,12 +69,13 @@ export async function importMPP(rows: Record<string, string>[]): Promise<ImportR
       );
 
       imported++;
-    } catch {
+    } catch (err) {
+      if (errors.length < 20) errors.push(`Row ${imported + errors.length + 1}: ${err instanceof Error ? err.message : String(err)}`);
       // skip bad rows, continue import
     }
   }
 
-  return { recordsTotal: rows.length, recordsImported: imported };
+  return { recordsTotal: rows.length, recordsImported: imported, errors: errors.length > 0 ? errors : undefined };
 }
 
 function normalizePlan(raw: string): "Basic" | "Basic with Interior" | "Ultimate" {
