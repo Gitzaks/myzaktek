@@ -69,6 +69,10 @@ export default function NavBar({ userName, role }: NavBarProps) {
                   <Link href="/admin" className="hover:underline flex items-center gap-1">
                     <span>⚙️</span> Admin
                   </Link>
+                  <span className="text-white/50 mx-1">|</span>
+                  <Link href="/admin/liability" className="hover:underline flex items-center gap-1">
+                    <span>📋</span> Liability Calculator
+                  </Link>
                 </>
               )}
             </>
