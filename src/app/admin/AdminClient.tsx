@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 
-type FileType = "mpp" | "units" | "zie" | "billing" | "autopoint" | "contracts";
+type FileType = "mpp" | "units" | "zie" | "billing" | "autopoint" | "contracts" | "dealers";
 type ImportStatus = "pending" | "imported" | "import_failed" | "processing";
 
 interface ImportFile {
@@ -394,6 +394,7 @@ export default function AdminClient() {
       </div>
 
       {/* File upload sections */}
+      <FileSection title="Dealer List" fileType="dealers" files={files} onRefresh={refresh} />
       <FileSection title="Customer Contracts (ZAKCNTRCTS)" fileType="contracts" files={files} onRefresh={refresh} />
       <FileSection title="MPP Files" fileType="mpp" files={files} onRefresh={refresh} />
       <FileSection title="Units Files" fileType="units" hasYearMonth files={files} onRefresh={refresh} />

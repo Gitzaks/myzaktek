@@ -7,6 +7,7 @@ import { importZIE } from "./zieImporter";
 import { importBilling } from "./billingImporter";
 import { importAutoPoint } from "./autopointImporter";
 import { importContracts } from "./contractsImporter";
+import { importDealers } from "./dealersImporter";
 
 export interface ImportResult {
   recordsTotal: number;
@@ -39,6 +40,8 @@ export async function runImport(importFile: IImportFileDocument, inMemoryBuffer?
   });
 
   switch (importFile.fileType) {
+    case "dealers":
+      return importDealers(rows);
     case "contracts":
       return importContracts(rows);
     case "mpp":

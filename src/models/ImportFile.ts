@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
-export type FileType = "mpp" | "units" | "zie" | "billing" | "autopoint" | "contracts";
+export type FileType = "mpp" | "units" | "zie" | "billing" | "autopoint" | "contracts" | "dealers";
 export type ImportStatus = "pending" | "imported" | "import_failed" | "processing";
 
 export interface IImportFileDocument extends Document {
@@ -24,7 +24,7 @@ const ImportFileSchema = new Schema<IImportFileDocument>(
     filename: { type: String, required: true },
     fileType: {
       type: String,
-      enum: ["mpp", "units", "zie", "billing", "autopoint", "contracts"],
+      enum: ["mpp", "units", "zie", "billing", "autopoint", "contracts", "dealers"],
       required: true,
     },
     status: {
