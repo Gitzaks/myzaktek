@@ -2,9 +2,13 @@ import Dealer from "@/models/Dealer";
 import type { ImportResult } from "./index";
 
 /**
- * Dealers CSV — columns: Dealer Code, Dealer Name
- * Upserts dealers by dealer code. Does not overwrite address/phone
- * fields already set on existing dealers.
+ * Dealer Master CSV — columns:
+ *   dealer_code, combine_with, zie_dealer, units_dealer,
+ *   billing_dealer, dme_dealer, zakcntrcts_dealer
+ *
+ * Upserts dealers by dealer_code, storing per-report name aliases so that
+ * other importers can do exact lookups instead of fragile fuzzy matching.
+ * Does not overwrite address/phone fields already set on existing records.
  */
 export async function importDealers(
   rows: Record<string, string>[]
@@ -15,13 +19,32 @@ export async function importDealers(
   for (const row of rows) {
     try {
       const dealerCode = (row["dealer_code"] ?? row["dealercode"] ?? "").trim();
-      const name = (row["dealer_name"] ?? row["dealername"] ?? "").trim();
-      if (!dealerCode || !name) continue;
+      if (!dealerCode) continue;
+
+      // Pull every master-file column (CSV parser normalises keys to lowercase)
+      const combineWith      = (row["combine_with"]      ?? "").trim() || undefined;
+      const zieDealer        = (row["zie_dealer"]        ?? "").trim() || undefined;
+      const unitsDealer      = (row["units_dealer"]      ?? "").trim() || undefined;
+      const billingDealer    = (row["billing_dealer"]    ?? "").trim() || undefined;
+      const dmeDealer        = (row["dme_dealer"]        ?? "").trim() || undefined;
+      const zakCntrtsDealer  = (row["zakcntrcts_dealer"] ?? "").trim() || undefined;
+
+      // dealer_name may not be present in the master file; fall back to dealerCode
+      const name = (row["dealer_name"] ?? row["dealername"] ?? dealerCode).trim();
 
       await Dealer.findOneAndUpdate(
         { dealerCode },
         {
-          $set: { name, dealerCode },
+          $set: {
+            dealerCode,
+            name,
+            ...(combineWith     !== undefined && { combineWith }),
+            ...(zieDealer       !== undefined && { zieDealer }),
+            ...(unitsDealer     !== undefined && { unitsDealer }),
+            ...(billingDealer   !== undefined && { billingDealer }),
+            ...(dmeDealer       !== undefined && { dmeDealer }),
+            ...(zakCntrtsDealer !== undefined && { zakCntrtsDealer }),
+          },
           $setOnInsert: {
             email: `${dealerCode.toLowerCase()}@dealers.zaktek.com`,
             address: "",

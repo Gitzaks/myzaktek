@@ -12,6 +12,13 @@ export interface IDealerDocument extends Document {
   coordinates?: { lat: number; lng: number };
   active: boolean;
   dealerCode: string;
+  // Dealer Master cross-reference fields
+  combineWith?: string;         // dealerCode of parent dealer (this dealer's data rolls up into it)
+  zieDealer?: string;           // name as it appears in ZIE files
+  unitsDealer?: string;         // name as it appears in Units files ("Combined" = not in this report)
+  billingDealer?: string;       // name as it appears in Billing files ("Combined" = not in this report)
+  dmeDealer?: string;           // name as it appears in AutoPoint/DME files ("Combined" = not in this report)
+  zakCntrtsDealer?: string;     // name as it appears in ZAKCNTRCTS files
   // Customer-facing fields
   serviceUrl?: string;          // Service scheduling URL ("Visit Dealership Website")
   logoUrl?: string;             // Dealer logo image URL
@@ -38,6 +45,12 @@ const DealerSchema = new Schema<IDealerDocument>(
     },
     active: { type: Boolean, default: true },
     dealerCode: { type: String, required: true, unique: true },
+    combineWith: { type: String },
+    zieDealer: { type: String },
+    unitsDealer: { type: String },
+    billingDealer: { type: String },
+    dmeDealer: { type: String },
+    zakCntrtsDealer: { type: String },
     serviceUrl: { type: String },
     logoUrl: { type: String },
     whatToExpect: { type: String },
