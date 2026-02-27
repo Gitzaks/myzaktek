@@ -5,6 +5,9 @@ import ImportFile from "@/models/ImportFile";
 import ChunkBuffer from "@/models/ChunkBuffer";
 import { runImport } from "@/lib/importers";
 
+// Allow up to 5 minutes for large file assembly + import processing
+export const maxDuration = 300;
+
 export async function GET() {
   const session = await auth();
   if (session?.user?.role !== "admin") {
@@ -66,9 +69,10 @@ export async function POST(req: NextRequest) {
       const year = formData.get("year") ? Number(formData.get("year")) : undefined;
       const month = formData.get("month") ? Number(formData.get("month")) : undefined;
 
-      // Retrieve all chunks from MongoDB in order and assemble
-      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 });
-      const assembledBuffer = Buffer.concat(chunks.map((c) => c.data));
+      // Retrieve all chunks from MongoDB in order and assemble.
+      // .lean() skips Mongoose document wrapping, halving memory use for large uploads.
+      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 }).lean();
+      const assembledBuffer = Buffer.concat(chunks.map((c) => Buffer.from(c.data)));
       await ChunkBuffer.deleteMany({ uploadId });
 
       // Create ImportFile record and run import with assembled buffer.
