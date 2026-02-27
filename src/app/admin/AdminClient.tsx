@@ -229,18 +229,27 @@ function FileSection({
                     {new Date(f.createdAt).toLocaleString()}
                   </td>
                   <td className="px-4 py-2 text-center">
-                    <span className={
-                      f.status === "imported" ? "text-gray-500" :
-                      f.status === "import_failed" ? "text-red-600" :
-                      f.status === "processing" ? "text-blue-600" :
-                      "text-gray-400"
-                    }>
-                      {f.status === "imported"
-                        ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
-                        : f.status === "import_failed" ? "Import Failed"
-                        : f.status === "processing" ? "Processing…"
-                        : "Pending"}
-                    </span>
+                    {(() => {
+                      const timedOut =
+                        f.status === "processing" &&
+                        Date.now() - new Date(f.createdAt).getTime() > 15 * 60 * 1000;
+                      return (
+                        <span className={
+                          f.status === "imported" ? "text-gray-500" :
+                          f.status === "import_failed" ? "text-red-600" :
+                          timedOut ? "text-orange-500" :
+                          f.status === "processing" ? "text-blue-600" :
+                          "text-gray-400"
+                        }>
+                          {f.status === "imported"
+                            ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
+                            : f.status === "import_failed" ? "Import Failed"
+                            : timedOut ? "Timed Out — remove and re-upload"
+                            : f.status === "processing" ? "Processing…"
+                            : "Pending"}
+                        </span>
+                      );
+                    })()}
                     {f.errorMessage && (
                       <div className="text-xs text-red-400 mt-0.5">
                         {f.errorMessage}
