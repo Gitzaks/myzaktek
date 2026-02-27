@@ -4,9 +4,14 @@ import { connectDB } from "@/lib/mongodb";
 import ImportFile from "@/models/ImportFile";
 import { writeFile, mkdir, readFile, appendFile, rm } from "fs/promises";
 import { join } from "path";
+import { runImport } from "@/lib/importers";
 
 
-const UPLOAD_DIR = join(process.cwd(), "uploads");
+// On Vercel (and other serverless platforms) the app root is read-only.
+// Only /tmp is writable at runtime.
+const UPLOAD_DIR = process.env.NODE_ENV === "production"
+  ? "/tmp/myzaktek-uploads"
+  : join(process.cwd(), "uploads");
 
 export async function GET() {
   const session = await auth();
@@ -89,12 +94,29 @@ export async function POST(req: NextRequest) {
       const importFile = await ImportFile.create({
         filename,
         fileType,
-        status: "pending",
+        status: "processing",
         uploadedBy: session.user.id,
         year,
         month,
         storagePath,
       });
+
+      // Run the import in the same request so the file is available in /tmp
+      try {
+        const result = await runImport(importFile);
+        importFile.status = "imported";
+        importFile.recordsImported = result.recordsImported;
+        importFile.recordsTotal = result.recordsTotal;
+        if (result.errors && result.errors.length > 0) {
+          importFile.errorMessage = result.errors.slice(0, 5).join(" | ");
+        } else {
+          importFile.errorMessage = undefined;
+        }
+      } catch (err) {
+        importFile.status = "import_failed";
+        importFile.errorMessage = err instanceof Error ? err.message : "Unknown error";
+      }
+      await importFile.save();
 
       return NextResponse.json(importFile, { status: 201 });
     }
@@ -124,12 +146,29 @@ export async function POST(req: NextRequest) {
     const importFile = await ImportFile.create({
       filename: file.name,
       fileType,
-      status: "pending",
+      status: "processing",
       uploadedBy: session.user.id,
       year,
       month,
       storagePath,
     });
+
+    // Run the import in the same request so the file is available in /tmp
+    try {
+      const result = await runImport(importFile);
+      importFile.status = "imported";
+      importFile.recordsImported = result.recordsImported;
+      importFile.recordsTotal = result.recordsTotal;
+      if (result.errors && result.errors.length > 0) {
+        importFile.errorMessage = result.errors.slice(0, 5).join(" | ");
+      } else {
+        importFile.errorMessage = undefined;
+      }
+    } catch (err) {
+      importFile.status = "import_failed";
+      importFile.errorMessage = err instanceof Error ? err.message : "Unknown error";
+    }
+    await importFile.save();
 
     return NextResponse.json(importFile, { status: 201 });
   } catch (err) {

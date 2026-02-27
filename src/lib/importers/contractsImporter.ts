@@ -12,16 +12,18 @@ import type { ImportResult } from "./index";
  * A–AL (38 columns): dealer_code … internal_cost
  */
 
-const PLAN_MAP: Record<string, "Basic" | "Basic with Interior" | "Ultimate"> = {
+const PLAN_MAP: Record<string, "Basic" | "Basic with Interior" | "Ultimate" | "Ultimate with Interior"> = {
   "basic": "Basic",
   "basic with interior": "Basic with Interior",
   "ultimate": "Ultimate",
+  "ultimate with interior": "Ultimate with Interior",
 };
 
 const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
   "Basic": "exterior",
   "Basic with Interior": "both",
   "Ultimate": "both",
+  "Ultimate with Interior": "both",
 };
 
 function parseDate(s: string | undefined): Date | null {
@@ -50,6 +52,7 @@ export async function importContracts(
   rows: Record<string, string>[]
 ): Promise<ImportResult> {
   let imported = 0;
+  const errors: string[] = [];
 
   // Hash placeholder password once — customers can't log in until they reset
   const placeholderHash = await bcrypt.hash("zaktek-import-placeholder", 4);
@@ -184,10 +187,13 @@ export async function importContracts(
       }
 
       imported++;
-    } catch {
-      // skip bad row, continue import
+    } catch (err) {
+      if (errors.length < 20) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`Row ${imported + errors.length + 1}: ${msg}`);
+      }
     }
   }
 
-  return { recordsTotal: rows.length, recordsImported: imported };
+  return { recordsTotal: rows.length, recordsImported: imported, errors: errors.length > 0 ? errors : undefined };
 }

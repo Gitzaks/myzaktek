@@ -11,11 +11,13 @@ import { importContracts } from "./contractsImporter";
 export interface ImportResult {
   recordsTotal: number;
   recordsImported: number;
+  errors?: string[];
 }
 
 export async function runImport(importFile: IImportFileDocument): Promise<ImportResult> {
   const buffer = await readFile(importFile.storagePath);
-  const csvText = buffer.toString("utf-8");
+  // Strip UTF-8 BOM if present — common in Windows/Excel CSV exports
+  const csvText = buffer.toString("utf-8").replace(/^\uFEFF/, "");
 
   // All file types have a header row
   const parsed = Papa.parse<Record<string, string>>(csvText, {
@@ -25,11 +27,11 @@ export async function runImport(importFile: IImportFileDocument): Promise<Import
 
   // Normalize all column headers to lowercase_underscore so importers
   // work regardless of whether the CSV uses "Dealer Code", "dealer_code",
-  // "DEALER_CODE", etc.
+  // "DEALER_CODE", etc.  Also strip any stray BOM on the first key.
   const rows = parsed.data.map((row) => {
     const normalized: Record<string, string> = {};
     for (const [key, value] of Object.entries(row)) {
-      const k = key.trim().toLowerCase().replace(/[\s\-]+/g, "_");
+      const k = key.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s\-]+/g, "_");
       normalized[k] = value as string;
     }
     return normalized;

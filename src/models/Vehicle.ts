@@ -24,7 +24,7 @@ const VehicleSchema = new Schema<IVehicleDocument>(
     year: { type: Number, required: true },
     make: { type: String, required: true, trim: true },
     vehicleModel: { type: String, required: true, trim: true },
-    color: { type: String, required: true },
+    color: { type: String, default: "" },
     dealerId: { type: Schema.Types.ObjectId, ref: "Dealer", required: true },
     purchaseDate: { type: Date, required: true },
     coverageType: {

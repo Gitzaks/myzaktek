@@ -33,13 +33,6 @@ export default function NavBar({ userName, role }: NavBarProps) {
         <nav className="flex items-center gap-1 text-sm">
           <span className="mr-2 text-white/90">Welcome, {userName}</span>
 
-          {!isCustomer && (
-            <>
-              <span className="text-white/50 mx-1">|</span>
-              <span className="text-white/80 text-xs">{roleLabel[role]}</span>
-            </>
-          )}
-
           {/* My Profile — all roles */}
           <span className="text-white/50 mx-1">|</span>
           <Link href="/profile" className="hover:underline flex items-center gap-1">
