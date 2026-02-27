@@ -96,9 +96,11 @@ export async function GET(
               // MongoDB operation starts.
               await new Promise<void>((r) => setImmediate(r));
             }
-            // Throttle DB saves to every 5 seconds
+            // Throttle DB saves to every 5 seconds.
+            // Always update processedRows and recordsTotal so a page-refresh
+            // can show DB-backed % instead of the static "Processing…" text.
             importFile.processedRows = processed;
-            if (!importFile.recordsTotal && total) importFile.recordsTotal = total;
+            if (total > 0) importFile.recordsTotal = total;
             if (Date.now() - lastDbSave >= 5000) {
               await importFile.save();
               lastDbSave = Date.now();

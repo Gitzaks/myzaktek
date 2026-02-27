@@ -216,16 +216,17 @@ export async function runImport(
   }
 
   // ── Standard single-sheet / CSV path ─────────────────────────────────────
-  const rows: Record<string, string>[] = [];
+  // NOTE: never use rows.push(...largeArray) — spreading 100k+ elements as
+  // function arguments blows the JS call stack. Assign directly instead.
+  let rows: Record<string, string>[];
 
   if (isExcel) {
     const wb = XLSX.read(buffer, { type: "buffer" });
-    rows.push(...normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]));
+    rows = normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]);
   } else {
     // Async streaming parse — does NOT block the event loop (see parseCsvBufferAsync above).
     await onProgress?.(0, 0, "Parsing file…");
-    const parsed = await parseCsvBufferAsync(buffer);
-    rows.push(...parsed);
+    rows = await parseCsvBufferAsync(buffer);
     await onProgress?.(0, rows.length, "File parsed, starting import…");
   }
 
