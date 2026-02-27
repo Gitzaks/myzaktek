@@ -5,9 +5,8 @@ import ImportFile from "@/models/ImportFile";
 import ChunkBuffer from "@/models/ChunkBuffer";
 import { runImport } from "@/lib/importers";
 
-// Give the import as much time as the platform allows.
-// On self-hosted Node.js this is unlimited; on Vercel Pro it caps at 800s.
-export const maxDuration = 800;
+// 300 s is the Vercel Pro maximum; on self-hosted Node.js there is no cap.
+export const maxDuration = 300;
 
 export async function GET(
   req: NextRequest,
