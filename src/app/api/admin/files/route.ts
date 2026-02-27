@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
 
       // Retrieve all chunks from MongoDB in order and assemble
       const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 }).lean();
-      const assembledBuffer = Buffer.concat(chunks.map((c) => c.data as Buffer));
+      const assembledBuffer = Buffer.concat(chunks.map((c) => Buffer.from(c.data as Buffer)));
       await ChunkBuffer.deleteMany({ uploadId });
 
       // Create ImportFile record and run import with assembled buffer
