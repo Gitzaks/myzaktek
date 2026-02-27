@@ -24,18 +24,25 @@ export async function importBilling(
       const billingName = row["zaktek_billing_name"]?.trim();
       if (!billingName) continue;
 
-      // Extract numeric code from parentheses: "ABC Nissan (704)" → "ZAK0704"
-      const match = billingName.match(/\((\d+)\)\s*$/);
-      if (!match) {
-        errors.push(`No dealer code found in: "${billingName}"`);
-        continue;
-      }
-      const dealerCode = "ZAK" + match[1].padStart(4, "0");
+      // Extract first numeric code from parentheses: "ABC Nissan (704)" or
+      // "Midway Auto Team (671 & 672)" → first number wins → "ZAK0704" / "ZAK0671"
+      const codeMatch = billingName.match(/\((\d+)/);
+      let dealer = null;
 
-      const dealer = await Dealer.findOne({ dealerCode });
-      if (!dealer) {
-        errors.push(`No dealer found for code: "${dealerCode}" (from "${billingName}")`);
-        continue;
+      if (codeMatch) {
+        const dealerCode = "ZAK" + codeMatch[1].padStart(4, "0");
+        dealer = await Dealer.findOne({ dealerCode });
+        if (!dealer) {
+          errors.push(`No dealer found for code: "${dealerCode}" (from "${billingName}")`);
+          continue;
+        }
+      } else {
+        // No (###) pattern — fall back to billingDealer name match from Dealer Master
+        dealer = await Dealer.findOne({ billingDealer: { $regex: `^${billingName}$`, $options: "i" } });
+        if (!dealer) {
+          errors.push(`No dealer code or name match for: "${billingName}"`);
+          continue;
+        }
       }
 
       const minimum = parseFloat(row["minimum"] ?? "0") || 0;
