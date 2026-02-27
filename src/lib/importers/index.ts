@@ -135,13 +135,14 @@ const ZAKCNTRCTS_COLUMNS = [
   "model_code",             // 28: model code e.g. RX5
   "series_name",            // 29: full model name e.g. RX 350
   "contract_purchase_date", // 30: purchase / start date
-  "expiration_date",        // 31: contract end date
-  "cancel_post_date",       // 32: cancellation post date (non-empty = cancelled)
+  "cancel_post_date",       // 31: cancellation post date ("00/00/0000" = active)
+  "expiration_date",        // 32: contract end date
   "cancel_date",            // 33: cancellation effective date
   "email_address",          // 34: customer email
   "internal_cost",          // 35: dealer net cost
   "deductible",             // 36: deductible amount
   "col_37",                 // 37: (reserved / unknown)
+  "col_38",                 // 38: (reserved / unknown)
 ] as const;
 
 // ── Async CSV parser ─────────────────────────────────────────────────────────
@@ -285,11 +286,12 @@ export async function runImport(
     rows = normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]);
   } else {
     // Async streaming parse — does NOT block the event loop (see parseCsvBufferAsync above).
-    // ZAKCNTRCTS files include a header row; always parse with header: true.
-    // The column-name validator in contractsImporter will catch any mismatch
-    // immediately, and the dealer-count safeguard prevents slow garbage imports.
+    // ZAKCNTRCTS raw exports have NO header row — always use positional mapping.
+    // (If a header-format file is ever introduced the column validator will catch
+    //  it immediately, since position-0 would map to record_type = "dealer_code".)
     await onProgress?.(0, 0, "Parsing file…");
-    rows = await parseCsvBufferAsync(buffer);
+    const csvColumns = importFile.fileType === "contracts" ? ZAKCNTRCTS_COLUMNS : undefined;
+    rows = await parseCsvBufferAsync(buffer, csvColumns);
     await onProgress?.(0, rows.length, "File parsed, starting import…");
   }
 
