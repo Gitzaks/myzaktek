@@ -31,9 +31,18 @@ export async function POST() {
   await connectDB();
 
   const now = new Date();
-  // First day of the CURRENT month — used to check if a 6-month anniversary falls this month
-  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const thisMonthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0); // last day
+
+  // Build two target month windows: current month and 6 months out.
+  // e.g. running in February → catch February-due AND August-due customers.
+  const targets = [0, 6].map((offset) => {
+    const y = now.getFullYear();
+    const m = now.getMonth() + offset;          // JS month is 0-based; Date handles overflow
+    return { year: new Date(y, m, 1).getFullYear(), month: new Date(y, m, 1).getMonth() };
+  });
+
+  // Upper bound for the filter loop: end of the furthest target month
+  const lastTarget  = targets[targets.length - 1];
+  const loopCutoff  = new Date(lastTarget.year, lastTarget.month + 1, 0); // last day
 
   // Load all active contracts with customer and dealer populated
   const contracts = await Contract.find({ status: "active" })
@@ -41,18 +50,16 @@ export async function POST() {
     .populate("dealerId", "name dealerCode address city state zip phone")
     .lean();
 
-  // Filter to contracts where a 6-month application anniversary falls in the current month
+  // Filter to contracts where ANY 6-month anniversary falls in the current month
+  // OR 6 months from now (so one generation run covers both mailer months).
   const dueContracts = contracts.filter((c) => {
     const begin = new Date(c.beginsAt);
-    // Check every 6-month mark from begin date — if any lands in this month, include it
     const d = new Date(begin);
-    while (d <= thisMonthEnd) {
-      if (
-        d.getFullYear() === thisMonthStart.getFullYear() &&
-        d.getMonth() === thisMonthStart.getMonth() &&
-        d > begin // skip the first application (month 0)
-      ) {
-        return true;
+    while (d <= loopCutoff) {
+      if (d > begin) { // skip month-0 (purchase date itself)
+        const dy = d.getFullYear();
+        const dm = d.getMonth();
+        if (targets.some((t) => t.year === dy && t.month === dm)) return true;
       }
       d.setMonth(d.getMonth() + 6);
     }
