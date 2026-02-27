@@ -142,6 +142,12 @@ function FileSection({
     onRefresh();
   }
 
+  async function handleRemove(fileId: string) {
+    if (!confirm("Delete this import record?")) return;
+    await fetch(`/api/admin/files/${fileId}`, { method: "DELETE" });
+    onRefresh();
+  }
+
   const typeFiles = files.filter((f) => f.fileType === fileType);
 
   return (
@@ -207,14 +213,19 @@ function FileSection({
             <thead>
               <tr className="bg-[#1565a8] text-white">
                 <th className="px-4 py-2 text-left font-semibold">Filename</th>
+                <th className="px-4 py-2 text-left font-semibold">Uploaded</th>
                 <th className="px-4 py-2 text-center font-semibold">Status</th>
                 <th className="px-4 py-2 text-center font-semibold">Import</th>
+                <th className="px-4 py-2 text-center font-semibold">Remove</th>
               </tr>
             </thead>
             <tbody>
               {typeFiles.map((f, i) => (
                 <tr key={f._id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                   <td className="px-4 py-2 text-gray-700">{f.filename}</td>
+                  <td className="px-4 py-2 text-gray-400 text-xs whitespace-nowrap">
+                    {new Date(f.createdAt).toLocaleString()}
+                  </td>
                   <td className="px-4 py-2 text-center">
                     <span className={
                       f.status === "imported" ? "text-gray-500" :
@@ -238,6 +249,14 @@ function FileSection({
                       className="text-[#1565a8] hover:underline font-semibold"
                     >
                       Import
+                    </button>
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <button
+                      onClick={() => handleRemove(f._id)}
+                      className="text-red-500 hover:underline font-semibold"
+                    >
+                      Remove
                     </button>
                   </td>
                 </tr>
