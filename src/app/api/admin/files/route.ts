@@ -67,8 +67,8 @@ export async function POST(req: NextRequest) {
       const month = formData.get("month") ? Number(formData.get("month")) : undefined;
 
       // Retrieve all chunks from MongoDB in order and assemble
-      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 }).lean();
-      const assembledBuffer = Buffer.concat(chunks.map((c) => Buffer.from(c.data as Buffer)));
+      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 });
+      const assembledBuffer = Buffer.concat(chunks.map((c) => c.data));
       await ChunkBuffer.deleteMany({ uploadId });
 
       // Create ImportFile record and run import with assembled buffer
