@@ -132,6 +132,21 @@ export async function importContracts(
     if (code && !dealerRowMap.has(code)) dealerRowMap.set(code, row);
   }
 
+  // Sanity check: ZAKCNTRCTS should have ~85 unique dealer codes, not thousands.
+  // A large count means the dealer_code column is misidentified (e.g. the file
+  // has a different column order than expected). Bail out immediately with a
+  // diagnostic so the admin can see which values were found in that column.
+  const MAX_DEALERS = 500;
+  if (dealerRowMap.size > MAX_DEALERS) {
+    errors.push(
+      `Column mapping error — found ${dealerRowMap.size.toLocaleString()} unique values in ` +
+      `dealer_code column (expected ≤${MAX_DEALERS}). ` +
+      `First 5 sample values: [${[...dealerRowMap.keys()].slice(0, 5).join(", ")}]. ` +
+      `All ${foundKeys.size} columns detected: [${[...foundKeys].join(", ")}]`,
+    );
+    return { recordsTotal: rows.length, recordsImported: 0, errors };
+  }
+
   const dealerOps = [...dealerRowMap.entries()].map(([code, row]) => {
     const dealerName  = row.dealer_name?.trim()  || undefined;
     const dealerPhone = (row.dealer_phone ?? row.dealer_phone_number ?? row.phone_number ?? row.phone ?? "").trim() || undefined;
@@ -268,8 +283,12 @@ export async function importContracts(
             beginsAt:     purchaseDate,
             endsAt:       expirationDate,
             purchaseDate,
-            ...(row.sale_price?.trim()    && { salePrice:    parseFloat(row.sale_price)    || undefined }),
-            ...(row.internal_cost?.trim() && { internalCost: parseFloat(row.internal_cost) || undefined }),
+            ...(row.plan?.trim()              && { planCode:     row.plan.trim() }),
+            ...(row.beginning_mileage?.trim() && { beginMileage: parseInt(row.beginning_mileage, 10) || undefined }),
+            ...(row.coverage_miles?.trim()    && { maxMileage:   parseInt(row.coverage_miles, 10)    || undefined }),
+            ...(row.deductible?.trim()        && { deductible:   parseFloat(row.deductible)          || 0 }),
+            ...(row.sale_price?.trim()        && { salePrice:    parseFloat(row.sale_price)           || undefined }),
+            ...(row.internal_cost?.trim()     && { internalCost: parseFloat(row.internal_cost)        || undefined }),
           },
           $setOnInsert: { homeKit: false },
         },
