@@ -792,6 +792,8 @@ export default function AdminClient() {
   const [apExports, setApExports] = useState<AutoPointExport[]>([]);
   const [fixingNames, setFixingNames]   = useState(false);
   const [fixNamesResult, setFixNamesResult] = useState("");
+  const [wiping, setWiping]             = useState(false);
+  const [wipeResult, setWipeResult]     = useState("");
 
   const refresh = useCallback(async () => {
     const [filesRes, apRes] = await Promise.all([
@@ -805,6 +807,32 @@ export default function AdminClient() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  async function wipeImportData() {
+    if (!confirm(
+      "This will permanently delete ALL contracts, service records, vehicles, customers, " +
+      "and garbage dealers.\n\nRe-import Dealer Master and ZAKCNTRCTS afterwards.\n\nContinue?"
+    )) return;
+    setWiping(true);
+    setWipeResult("");
+    try {
+      const res  = await fetch("/api/admin/migrate/wipe-import-data", { method: "POST" });
+      const data = await res.json() as { deleted?: Record<string, number>; message?: string };
+      if (res.ok && data.deleted) {
+        const d = data.deleted;
+        setWipeResult(
+          `Deleted: ${d.contracts} contracts, ${d.serviceRecords} service records, ` +
+          `${d.vehicles} vehicles, ${d.customers} customers, ${d.garbageDealers} garbage dealers.`
+        );
+        refresh();
+      } else {
+        setWipeResult((data as { error?: string }).error ?? "Failed.");
+      }
+    } catch {
+      setWipeResult("Network error.");
+    }
+    setWiping(false);
+  }
 
   async function fixDealerNames() {
     setFixingNames(true);
@@ -840,6 +868,13 @@ export default function AdminClient() {
             {fixingNames ? "Fixing…" : "Fix Dealer Names"}
           </button>
           {fixNamesResult && <span className="text-sm text-gray-600">{fixNamesResult}</span>}
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <button onClick={wipeImportData} disabled={wiping}
+            className="bg-red-700 text-white font-medium px-6 py-2 rounded hover:bg-red-800 disabled:opacity-50 text-sm">
+            {wiping ? "Wiping…" : "Wipe Import Data"}
+          </button>
+          {wipeResult && <span className="text-sm text-gray-600">{wipeResult}</span>}
         </div>
       </div>
 
