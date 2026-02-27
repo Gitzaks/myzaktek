@@ -174,6 +174,12 @@ export default function RemindersClient() {
         >
           Customer Search
         </Link>
+        <Link
+          href="/liability"
+          className="px-6 py-3 text-sm font-semibold text-[#1565a8] hover:bg-gray-50"
+        >
+          Liability Calculator
+        </Link>
       </div>
 
       {/* ── Content ────────────────────────────────────────────────────── */}
