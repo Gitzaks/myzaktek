@@ -16,7 +16,13 @@ export interface ImportResult {
   errors?: string[];
 }
 
-export async function runImport(importFile: IImportFileDocument, inMemoryBuffer?: Buffer): Promise<ImportResult> {
+export type ProgressFn = (processed: number, total: number) => Promise<void>;
+
+export async function runImport(
+  importFile: IImportFileDocument,
+  inMemoryBuffer?: Buffer,
+  onProgress?: ProgressFn,
+): Promise<ImportResult> {
   // Use the provided buffer, then the persisted fileData, then fall back to reading from disk
   const buffer = inMemoryBuffer ?? (importFile.fileData ? Buffer.from(importFile.fileData) : await readFile(importFile.storagePath));
   const isExcel = importFile.filename.toLowerCase().endsWith(".xlsx");
@@ -55,7 +61,7 @@ export async function runImport(importFile: IImportFileDocument, inMemoryBuffer?
     case "dealers":
       return importDealers(rows);
     case "contracts":
-      return importContracts(rows);
+      return importContracts(rows, onProgress);
     case "mpp":
       return importMPP(rows);
     case "units":

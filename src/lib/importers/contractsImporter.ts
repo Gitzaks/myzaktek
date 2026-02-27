@@ -5,7 +5,7 @@ import Contract from "@/models/Contract";
 import Vehicle from "@/models/Vehicle";
 import ServiceRecord from "@/models/ServiceRecord";
 import { getApplicationSchedule } from "@/lib/schedule";
-import type { ImportResult } from "./index";
+import type { ImportResult, ProgressFn } from "./index";
 
 /**
  * ZAKCNTRCTS import — header row present, columns named exactly as they appear.
@@ -72,9 +72,11 @@ async function bulkWrite<T>(
 }
 
 export async function importContracts(
-  rows: Record<string, string>[]
+  rows: Record<string, string>[],
+  onProgress?: ProgressFn,
 ): Promise<ImportResult> {
   if (rows.length === 0) return { recordsTotal: 0, recordsImported: 0 };
+  const total = rows.length;
 
   const errors: string[] = [];
   const placeholderHash = await bcrypt.hash("zaktek-import-placeholder", 4);
@@ -141,6 +143,7 @@ export async function importContracts(
   } catch (err) {
     errors.push(`Dealer upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  await onProgress?.(Math.round(total * 0.05), total); // ~5%
 
   // Build dealer code → _id lookup
   const dealersInDB = await Dealer.find(
@@ -188,6 +191,7 @@ export async function importContracts(
   } catch (err) {
     errors.push(`User upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  await onProgress?.(Math.round(total * 0.30), total); // ~30%
 
   // Build email → _id lookup (batch $in queries for very large sets)
   const userIdMap = new Map<string, unknown>();
@@ -235,6 +239,7 @@ export async function importContracts(
   } catch (err) {
     errors.push(`Contract upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  await onProgress?.(Math.round(total * 0.60), total); // ~60%
 
   // Count imported = number of unique agreement IDs in the file (ordered:false means all succeed or are skipped)
   const allAgreementIds = [...new Set(rows.map(agreementId))];
@@ -301,6 +306,7 @@ export async function importContracts(
       // non-fatal — service records can be rebuilt
     }
   }
+  await onProgress?.(Math.round(total * 0.80), total); // ~80%
 
   // ── 5. Bulk upsert vehicles ────────────────────────────────────────────────
   const vehicleOps = rows
@@ -344,6 +350,7 @@ export async function importContracts(
       errors.push(`Vehicle upsert failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  await onProgress?.(total, total); // 100%
 
   return {
     recordsTotal: rows.length,

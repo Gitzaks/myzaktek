@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 type FileType = "mpp" | "units" | "zie" | "billing" | "autopoint" | "contracts" | "dealers";
 type ImportStatus = "pending" | "imported" | "import_failed" | "processing";
@@ -13,6 +13,7 @@ interface ImportFile {
   month?: number;
   recordsTotal?: number;
   recordsImported?: number;
+  processedRows?: number;
   errorMessage?: string;
   importErrors?: string[];
   createdAt: string;
@@ -344,6 +345,27 @@ function FileSection({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showErrorsId, setShowErrorsId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [importingId, setImportingId] = useState<string | null>(null);
+
+  // Auto-poll every 2 s whenever any file in this section is processing
+  const typeFiles = files.filter((f) => f.fileType === fileType);
+  const anyProcessing = typeFiles.some((f) => f.status === "processing");
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (anyProcessing) {
+      if (!pollRef.current) {
+        pollRef.current = setInterval(() => { onRefresh(); }, 2000);
+      }
+    } else {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      // Clear local importing state once the server says it's no longer processing
+      if (importingId && typeFiles.some((f) => f._id === importingId && f.status !== "processing")) {
+        setImportingId(null);
+      }
+    }
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyProcessing]);
 
   async function handleUpload() {
     if (!selectedFile) return;
@@ -443,7 +465,9 @@ function FileSection({
   }
 
   async function handleImport(fileId: string) {
+    setImportingId(fileId);
     await fetch(`/api/admin/files/${fileId}/import`, { method: "POST" });
+    // Route now returns 202 immediately; auto-poll effect takes over from here.
     onRefresh();
   }
 
@@ -457,8 +481,6 @@ function FileSection({
     await fetch(`/api/admin/files/${fileId}`, { method: "DELETE" });
     onRefresh();
   }
-
-  const typeFiles = files.filter((f) => f.fileType === fileType);
 
   return (
     <div className="mb-8">
@@ -554,23 +576,30 @@ function FileSection({
                   </td>
                   <td className="px-4 py-2 text-center">
                     {(() => {
+                      const isProcessing = f.status === "processing" || importingId === f._id;
                       const timedOut =
                         f.status === "processing" &&
-                        Date.now() - new Date(f.createdAt).getTime() > 5 * 60 * 1000;
+                        importingId !== f._id &&
+                        Date.now() - new Date(f.createdAt).getTime() > 10 * 60 * 1000;
+                      const pct =
+                        isProcessing && f.processedRows != null && f.recordsTotal
+                          ? Math.round((f.processedRows / f.recordsTotal) * 100)
+                          : null;
                       return (
                         <>
                           <span className={
                             f.status === "imported" ? "text-gray-500" :
                             f.status === "import_failed" ? "text-red-600" :
                             timedOut ? "text-orange-500" :
-                            f.status === "processing" ? "text-blue-600" :
+                            isProcessing ? "text-blue-600" :
                             "text-gray-400"
                           }>
                             {f.status === "imported"
                               ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
                               : f.status === "import_failed" ? "Import Failed"
                               : timedOut ? "Stuck — click Reset"
-                              : f.status === "processing" ? "Processing…"
+                              : isProcessing
+                                ? pct != null ? `Processing… ${pct}%` : "Processing…"
                               : "Pending"}
                           </span>
                           {timedOut && (
@@ -608,9 +637,10 @@ function FileSection({
                   <td className="px-4 py-2 text-center">
                     <button
                       onClick={() => handleImport(f._id)}
-                      className="text-[#1565a8] hover:underline font-semibold"
+                      disabled={f.status === "processing" || importingId === f._id}
+                      className="text-[#1565a8] hover:underline font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      Import
+                      {importingId === f._id ? "Starting…" : "Import"}
                     </button>
                   </td>
                   <td className="px-4 py-2 text-center">
