@@ -123,6 +123,8 @@ export async function runImport(
       if (!parsed) continue; // silently skip non-month tabs (e.g. "YTD Report")
       const sheetRows = normalizeAutoPointSheet(wb.Sheets[sheetName]);
       if (sheetRows.length === 0) continue;
+      // Temporary diagnostic — remove once column mapping is confirmed
+      if (sheetRows[0]) allErrors.push(`[${sheetName}] DEBUG columns: ${Object.keys(sheetRows[0]).join(" | ")}`);
       const result = await importAutoPoint(sheetRows, parsed.year, parsed.month);
       totalRecords  += result.recordsTotal;
       totalImported += result.recordsImported;
