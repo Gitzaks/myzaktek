@@ -447,6 +447,11 @@ function FileSection({
     onRefresh();
   }
 
+  async function handleReset(fileId: string) {
+    await fetch(`/api/admin/files/${fileId}`, { method: "PATCH" });
+    onRefresh();
+  }
+
   async function handleRemove(fileId: string) {
     if (!confirm("Delete this import record?")) return;
     await fetch(`/api/admin/files/${fileId}`, { method: "DELETE" });
@@ -551,22 +556,32 @@ function FileSection({
                     {(() => {
                       const timedOut =
                         f.status === "processing" &&
-                        Date.now() - new Date(f.createdAt).getTime() > 15 * 60 * 1000;
+                        Date.now() - new Date(f.createdAt).getTime() > 5 * 60 * 1000;
                       return (
-                        <span className={
-                          f.status === "imported" ? "text-gray-500" :
-                          f.status === "import_failed" ? "text-red-600" :
-                          timedOut ? "text-orange-500" :
-                          f.status === "processing" ? "text-blue-600" :
-                          "text-gray-400"
-                        }>
-                          {f.status === "imported"
-                            ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
-                            : f.status === "import_failed" ? "Import Failed"
-                            : timedOut ? "Timed Out — remove and re-upload"
-                            : f.status === "processing" ? "Processing…"
-                            : "Pending"}
-                        </span>
+                        <>
+                          <span className={
+                            f.status === "imported" ? "text-gray-500" :
+                            f.status === "import_failed" ? "text-red-600" :
+                            timedOut ? "text-orange-500" :
+                            f.status === "processing" ? "text-blue-600" :
+                            "text-gray-400"
+                          }>
+                            {f.status === "imported"
+                              ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
+                              : f.status === "import_failed" ? "Import Failed"
+                              : timedOut ? "Stuck — click Reset"
+                              : f.status === "processing" ? "Processing…"
+                              : "Pending"}
+                          </span>
+                          {timedOut && (
+                            <button
+                              onClick={() => handleReset(f._id)}
+                              className="ml-2 text-orange-600 hover:underline text-xs font-semibold"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </>
                       );
                     })()}
                     {f.errorMessage && (
