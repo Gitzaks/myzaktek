@@ -49,6 +49,282 @@ function parseYearMonthFromFilename(filename: string): { year: number; month: nu
   return null;
 }
 
+const FILE_TYPE_LABELS: Record<FileType, string> = {
+  dealers: "Dealer List",
+  contracts: "Customer Contracts",
+  mpp: "MPP",
+  units: "Units",
+  zie: "ZIE",
+  billing: "Billing",
+  autopoint: "AutoPoint Results",
+};
+
+const FILE_TYPE_HAS_DATE: Record<FileType, boolean> = {
+  dealers: false, contracts: false, mpp: false,
+  units: true, zie: true, billing: true, autopoint: true,
+};
+
+function parseFileTypeFromFilename(filename: string): FileType | null {
+  const upper = filename.toUpperCase();
+  if (upper.includes("ZAKCNTRCTS") || upper.includes("CONTRACTS") || upper.includes("CNTRCTS")) return "contracts";
+  if (upper.includes("DEALERS") || upper.includes("DEALER_MASTER") || upper.includes("DEALERMASTER")) return "dealers";
+  if (upper.includes("AUTOPOINT") || upper.includes("AUTOPNT") || upper.includes("AUTO_POINT")) return "autopoint";
+  if (upper.includes("BILLING")) return "billing";
+  if (upper.includes("UNITS") || upper.includes("UNIT_")) return "units";
+  if (upper.includes("_ZIE") || upper.includes("ZIE_") || /[^A-Z]ZIE[^A-Z]/.test(upper) || upper.startsWith("ZIE") || upper.endsWith("ZIE.CSV") || upper.endsWith("ZIE.XLSX")) return "zie";
+  if (upper.includes("MPP")) return "mpp";
+  return null;
+}
+
+interface BatchItem {
+  file: File;
+  detectedType: FileType | null;
+  detectedDate: { year: number; month: number } | null;
+  /** null = not yet started, "uploading" = in progress, "done" = finished, error string = failed */
+  result: null | "uploading" | "done" | string;
+}
+
+function BatchUploadSection({ onRefresh }: { onRefresh: () => void }) {
+  const [items, setItems] = useState<BatchItem[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [currentIdx, setCurrentIdx] = useState<number>(-1);
+  const [chunkProgress, setChunkProgress] = useState("");
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const list = Array.from(e.target.files ?? []);
+    setItems(list.map((file) => ({
+      file,
+      detectedType: parseFileTypeFromFilename(file.name),
+      detectedDate: parseYearMonthFromFilename(file.name),
+      result: null,
+    })));
+    e.target.value = "";
+  }
+
+  function setItemType(idx: number, type: FileType) {
+    setItems((prev) => prev.map((it, i) => i === idx ? { ...it, detectedType: type } : it));
+  }
+
+  function removeItem(idx: number) {
+    setItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  async function uploadOneFile(item: BatchItem, idx: number) {
+    const { file, detectedType, detectedDate } = item;
+    const fileType = detectedType!;
+    const hasDate = FILE_TYPE_HAS_DATE[fileType];
+
+    const CHUNK_SIZE = 1 * 1024 * 1024;
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    for (let ci = 0; ci < totalChunks; ci++) {
+      setChunkProgress(`chunk ${ci + 1}/${totalChunks}`);
+      const start = ci * CHUNK_SIZE;
+      const chunkBlob = file.slice(start, Math.min(start + CHUNK_SIZE, file.size));
+      const form = new FormData();
+      form.append("chunk", chunkBlob, file.name);
+      form.append("uploadId", uploadId);
+      form.append("chunkIndex", String(ci));
+      form.append("fileType", fileType);
+      const res = await fetch("/api/admin/files", { method: "POST", body: form });
+      if (!res.ok) {
+        let msg = `chunk ${ci + 1}/${totalChunks} failed (HTTP ${res.status})`;
+        try { const d = await res.json(); msg = d.error ?? msg; } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+    }
+
+    setChunkProgress("processing…");
+    const finalizeForm = new FormData();
+    finalizeForm.append("uploadId", uploadId);
+    finalizeForm.append("finalize", "true");
+    finalizeForm.append("filename", file.name);
+    finalizeForm.append("fileType", fileType);
+    if (hasDate && detectedDate) {
+      finalizeForm.append("year", String(detectedDate.year));
+      finalizeForm.append("month", String(detectedDate.month));
+    }
+
+    const finalizeRes = await fetch("/api/admin/files", { method: "POST", body: finalizeForm });
+    if (finalizeRes.status === 202) {
+      const data = await finalizeRes.json() as { processing: boolean; fileId: string };
+      if (data.processing && data.fileId) {
+        let done = false;
+        while (!done) {
+          await new Promise((r) => setTimeout(r, 3000));
+          try {
+            const poll = await fetch("/api/admin/files");
+            if (poll.ok) {
+              const { files } = await poll.json() as { files: ImportFile[] };
+              const f = files.find((f) => f._id === data.fileId);
+              if (f && f.status !== "processing") done = true;
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    } else if (!finalizeRes.ok) {
+      let msg = `import failed (HTTP ${finalizeRes.status})`;
+      try { const d = await finalizeRes.json(); msg = d.error ?? msg; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+  }
+
+  async function handleUpload() {
+    // Validate all items have a type; date-required types must have a date
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it.detectedType) {
+        alert(`Cannot detect file type for "${it.file.name}". Please select it manually.`);
+        return;
+      }
+      if (FILE_TYPE_HAS_DATE[it.detectedType] && !it.detectedDate) {
+        alert(`Cannot detect month/year from "${it.file.name}". Rename to include MM.YYYY (e.g. 05.2025_ZIE.csv).`);
+        return;
+      }
+    }
+
+    setUploading(true);
+    setCurrentIdx(0);
+
+    for (let i = 0; i < items.length; i++) {
+      setCurrentIdx(i);
+      setItems((prev) => prev.map((it, idx) => idx === i ? { ...it, result: "uploading" } : it));
+      try {
+        await uploadOneFile(items[i], i);
+        setItems((prev) => prev.map((it, idx) => idx === i ? { ...it, result: "done" } : it));
+        onRefresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setItems((prev) => prev.map((it, idx) => idx === i ? { ...it, result: msg } : it));
+      }
+    }
+
+    setUploading(false);
+    setCurrentIdx(-1);
+    setChunkProgress("");
+  }
+
+  const readyCount = items.filter(
+    (it) => it.detectedType && (!FILE_TYPE_HAS_DATE[it.detectedType] || it.detectedDate)
+  ).length;
+
+  return (
+    <div className="mb-8">
+      <div className="bg-[#1565a8] text-white font-bold italic text-lg px-4 py-3 rounded-t">
+        Batch Upload (Multiple Files)
+      </div>
+      <div className="border border-t-0 border-gray-200 rounded-b p-4 bg-white">
+        <p className="text-sm text-gray-600 mb-3">
+          Select multiple files at once. File type and month/year are auto-detected from the filename
+          (e.g. <span className="font-mono">05.2025_ZIE.csv</span>). You can override the type manually before uploading.
+        </p>
+
+        <div className="flex items-center gap-3 mb-4">
+          <label className="cursor-pointer border border-gray-300 rounded px-4 py-2 text-sm hover:bg-gray-50 text-gray-700">
+            Select Files
+            <input
+              type="file"
+              accept=".csv,.xlsx"
+              multiple
+              className="hidden"
+              onChange={handleFileChange}
+              disabled={uploading}
+            />
+          </label>
+          {items.length > 0 && (
+            <button
+              onClick={handleUpload}
+              disabled={uploading || readyCount === 0}
+              className="bg-[#1565a8] text-white px-4 py-2 rounded text-sm hover:bg-[#0f4f8a] disabled:opacity-50"
+            >
+              {uploading
+                ? `Uploading ${currentIdx + 1}/${items.length} — ${chunkProgress}`
+                : `Upload ${readyCount} file${readyCount !== 1 ? "s" : ""}`}
+            </button>
+          )}
+          {items.length > 0 && !uploading && (
+            <button
+              onClick={() => setItems([])}
+              className="text-sm text-gray-500 hover:text-gray-700 underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {items.length > 0 && (
+          <table className="min-w-full text-sm border border-gray-200 rounded overflow-hidden">
+            <thead>
+              <tr className="bg-gray-100 text-gray-600">
+                <th className="px-3 py-2 text-left font-semibold">Filename</th>
+                <th className="px-3 py-2 text-left font-semibold">File Type</th>
+                <th className="px-3 py-2 text-left font-semibold">Period</th>
+                <th className="px-3 py-2 text-center font-semibold">Status</th>
+                <th className="px-3 py-2 text-center font-semibold"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it, i) => (
+                <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                  <td className="px-3 py-2 text-gray-700 max-w-xs truncate" title={it.file.name}>
+                    {it.file.name}
+                    <span className="ml-1 text-xs text-gray-400">
+                      ({(it.file.size / 1024 / 1024).toFixed(2)} MB)
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    <select
+                      value={it.detectedType ?? ""}
+                      onChange={(e) => setItemType(i, e.target.value as FileType)}
+                      disabled={uploading}
+                      className={`border rounded px-2 py-1 text-xs focus:outline-none ${
+                        it.detectedType ? "border-gray-300 text-gray-700" : "border-red-400 text-red-600"
+                      }`}
+                    >
+                      {!it.detectedType && <option value="">— select type —</option>}
+                      {(Object.keys(FILE_TYPE_LABELS) as FileType[]).map((t) => (
+                        <option key={t} value={t}>{FILE_TYPE_LABELS[t]}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-3 py-2 text-xs">
+                    {it.detectedType && FILE_TYPE_HAS_DATE[it.detectedType] ? (
+                      it.detectedDate
+                        ? <span className="text-green-700">{MONTH_NAMES[it.detectedDate.month - 1]} {it.detectedDate.year}</span>
+                        : <span className="text-red-600">not detected</span>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-center text-xs">
+                    {it.result === null && <span className="text-gray-400">Pending</span>}
+                    {it.result === "uploading" && <span className="text-blue-600">Uploading…</span>}
+                    {it.result === "done" && <span className="text-green-700">Done</span>}
+                    {it.result !== null && it.result !== "uploading" && it.result !== "done" && (
+                      <span className="text-red-600" title={it.result}>Failed</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {!uploading && (
+                      <button
+                        onClick={() => removeItem(i)}
+                        className="text-red-500 hover:text-red-700 text-xs"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FileSection({
   title,
   fileType,
@@ -509,6 +785,9 @@ export default function AdminClient() {
       <FileSection title="ZIE Files" fileType="zie" hasYearMonth files={files} onRefresh={refresh} />
       <FileSection title="Billing Files" fileType="billing" hasYearMonth files={files} onRefresh={refresh} />
       <FileSection title="AutoPoint Results" fileType="autopoint" hasYearMonth files={files} onRefresh={refresh} />
+
+      {/* Batch upload */}
+      <BatchUploadSection onRefresh={refresh} />
 
       {/* AutoPoint generation */}
       <AutoPointSection exports={apExports} onRefresh={refresh} />
