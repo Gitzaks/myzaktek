@@ -101,6 +101,18 @@ export async function importContracts(
   const errors: string[] = [];
   const placeholderHash = await bcrypt.hash("zaktek-import-placeholder", 4);
 
+  // ── 0. Column-name sanity check ───────────────────────────────────────────
+  // Run this BEFORE any DB writes so mismatches surface immediately.
+  const foundKeys = new Set(Object.keys(rows[0]));
+  const REQUIRED = ["agreement", "agreement_suffix", "dealer_code", "expiration_date", "coverage", "vin"];
+  const missing   = REQUIRED.filter((k) => !foundKeys.has(k));
+  if (missing.length > 0) {
+    errors.push(
+      `Column mapping mismatch — missing: [${missing.join(", ")}]. ` +
+      `Actual columns found: [${[...foundKeys].slice(0, 30).join(", ")}]`,
+    );
+  }
+
   // ── 1. Bulk upsert dealers (0 → 5%) ───────────────────────────────────────
   const dealerRowMap = new Map<string, Record<string, string>>();
   for (const row of rows) {

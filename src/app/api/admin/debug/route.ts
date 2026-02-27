@@ -63,6 +63,7 @@ export async function GET() {
       recordsImported: f.recordsImported,
       recordsTotal: f.recordsTotal,
       errorMessage: f.errorMessage,
+      importErrors: f.importErrors,
       createdAt: f.createdAt,
     })),
     latestImportFileData: fileDataInfo,
