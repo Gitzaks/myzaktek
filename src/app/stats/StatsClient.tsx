@@ -8,7 +8,7 @@ import type { UserRole } from "@/types";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-interface Dealer { _id: string; name: string; dealerCode: string }
+interface Dealer { _id: string; name: string; dealerCode: string; logoUrl?: string }
 interface MonthlyStat {
   month: number; year: number;
   stats: Record<string, number | undefined>;
@@ -111,12 +111,19 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
           <a href="/liability-calculator" className="text-[#1565a8] font-bold italic text-lg hover:underline">
             View Liability Calculator
           </a>
-          {selectedDealer && (
+          {selectedDealer?.logoUrl ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={selectedDealer.logoUrl}
+              alt={selectedDealer.name}
+              className="max-h-16 max-w-40 object-contain"
+            />
+          ) : selectedDealer ? (
             <div className="text-right">
               <div className="font-bold text-gray-700">{selectedDealer.name}</div>
               <div className="text-xs text-gray-400">{selectedDealer.dealerCode}</div>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 

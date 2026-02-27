@@ -394,7 +394,17 @@ export default function DealerEditClient({
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold italic text-gray-700 mb-6">Dealership Information</h1>
+      {/* Page header — matches reference design: icon + title on left, dealer logo on right */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <span className="text-4xl leading-none">📋</span>
+          <h1 className="text-2xl font-bold italic text-gray-700">Dealership Information</h1>
+        </div>
+        {logoUrl && (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src={logoUrl} alt={name} className="max-h-20 max-w-48 object-contain" />
+        )}
+      </div>
 
       {/* ── Manage Users ── */}
       <section className="mb-8">

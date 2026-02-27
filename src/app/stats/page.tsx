@@ -8,7 +8,7 @@ async function getDealers(role: string, dealerIds: string[], regionId?: string) 
   const query: Record<string, unknown> = { active: true };
   if (role === "dealer") query._id = { $in: dealerIds };
   else if (role === "regional") query.regionId = regionId;
-  return Dealer.find(query).sort({ name: 1 }).select("_id name dealerCode").lean();
+  return Dealer.find(query).sort({ name: 1 }).select("_id name dealerCode logoUrl").lean();
 }
 
 export default async function StatsPage() {
@@ -21,7 +21,7 @@ export default async function StatsPage() {
 
   return (
     <StatsClient
-      dealers={dealers.map((d) => ({ _id: d._id.toString(), name: d.name, dealerCode: d.dealerCode }))}
+      dealers={dealers.map((d) => ({ _id: d._id.toString(), name: d.name, dealerCode: d.dealerCode, logoUrl: d.logoUrl ?? "" }))}
       userRole={session.user.role}
       isAdmin={session.user.role === "admin"}
     />
