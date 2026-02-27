@@ -25,14 +25,14 @@ interface Props {
 }
 
 const PLANS = ["All Plans", "Basic", "Basic with Interior", "Ultimate"];
-const PER_PAGE_OPTIONS = [10, 25, 50, 100];
+const PER_PAGE_OPTIONS = [25, 50, 100, 500];
 
 export default function DashboardClient({ initialStats, userRole, userDealerIds, lastUpdate }: Props) {
   const [tab, setTab] = useState<"list" | "search">("list");
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
+  const [limit, setLimit] = useState(500);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [dealerFilter, setDealerFilter] = useState("");
@@ -194,7 +194,7 @@ export default function DashboardClient({ initialStats, userRole, userDealerIds,
               className="border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none"
             >
               {PER_PAGE_OPTIONS.map((n) => (
-                <option key={n} value={n}>{n} Records Per Page</option>
+                <option key={n} value={n}>{n === 500 ? "All Records" : `${n} Records Per Page`}</option>
               ))}
             </select>
           </div>

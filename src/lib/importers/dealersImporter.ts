@@ -29,15 +29,16 @@ export async function importDealers(
       const dmeDealer        = (row["dme_dealer"]        ?? "").trim() || undefined;
       const zakCntrtsDealer  = (row["zakcntrcts_dealer"] ?? "").trim() || undefined;
 
-      // dealer_name may not be present in the master file; fall back to dealerCode
-      const name = (row["dealer_name"] ?? row["dealername"] ?? dealerCode).trim();
+      // dealer_name is optional in the master file; only update it when the CSV
+      // explicitly provides it — otherwise preserve whatever name is already stored.
+      const nameFromCSV = (row["dealer_name"] ?? row["dealername"] ?? "").trim();
 
       await Dealer.findOneAndUpdate(
         { dealerCode },
         {
           $set: {
             dealerCode,
-            name,
+            ...(nameFromCSV && { name: nameFromCSV }),
             ...(combineWith     !== undefined && { combineWith }),
             ...(zieDealer       !== undefined && { zieDealer }),
             ...(unitsDealer     !== undefined && { unitsDealer }),

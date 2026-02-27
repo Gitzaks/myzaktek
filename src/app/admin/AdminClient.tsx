@@ -335,12 +335,27 @@ function FileSection({
 
 function AutoPointSection({ exports, onRefresh }: { exports: AutoPointExport[]; onRefresh: () => void }) {
   const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState("");
 
   async function generate() {
     setGenerating(true);
-    await fetch("/api/admin/autopoint/generate", { method: "POST" });
-    setGenerating(false);
-    onRefresh();
+    setGenError("");
+    try {
+      const res = await fetch("/api/admin/autopoint/generate", { method: "POST" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setGenError(d.error ?? `Generation failed (HTTP ${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      // Immediately download the generated file
+      await handleDownload(data._id, data.filename);
+      onRefresh();
+    } catch (err) {
+      setGenError(`Network error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function handleDownload(id: string, filename: string) {
@@ -376,6 +391,7 @@ function AutoPointSection({ exports, onRefresh }: { exports: AutoPointExport[]; 
             {generating ? "Generating…" : "Generate AutoPoint"}
           </button>
         </div>
+        {genError && <p className="text-red-600 text-sm mb-4">{genError}</p>}
 
         <p className="font-semibold text-gray-700 mb-2">AutoPoint Files</p>
         {exports.length === 0 ? (

@@ -120,22 +120,18 @@ export default function StatsClient({ dealers, isAdmin }: Props) {
         </div>
       </div>
 
-      {/* Dealer Tabs */}
-      <div className="bg-gray-100 border-b border-gray-200 px-8 flex gap-0 overflow-x-auto">
-        {dealers.map((d) => (
-          <button
-            key={d._id}
-            onClick={() => setSelectedDealerId(d._id)}
-            className={`px-5 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-colors ${
-              d._id === selectedDealerId
-                ? "border-[#1565a8] text-[#1565a8] bg-white"
-                : "border-transparent text-gray-600 hover:text-[#1565a8]"
-            }`}
-          >
-            {d.name}
-          </button>
-        ))}
-        <button className="px-5 py-2 text-sm text-[#1565a8] hover:underline">Dealers</button>
+      {/* Dealer selector — compact dropdown matching reference design */}
+      <div className="bg-gray-100 border-b border-gray-200 px-8 py-2 flex items-center gap-2">
+        <select
+          value={selectedDealerId}
+          onChange={(e) => setSelectedDealerId(e.target.value)}
+          className="border border-gray-300 rounded px-3 py-1.5 text-sm font-semibold text-gray-700 focus:outline-none focus:border-[#1565a8] bg-white"
+        >
+          {dealers.map((d) => (
+            <option key={d._id} value={d._id}>{d.name}</option>
+          ))}
+        </select>
+        <span className="text-sm font-semibold text-gray-500">Dealers</span>
       </div>
 
       {loading ? (

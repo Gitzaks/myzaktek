@@ -18,7 +18,7 @@ export default function DealershipsClient({ lastUpdate }: { lastUpdate?: string 
   const [rows, setRows] = useState<DealerRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
+  const [limit, setLimit] = useState(500);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -122,8 +122,8 @@ export default function DealershipsClient({ lastUpdate }: { lastUpdate?: string 
               onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
               className="border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none"
             >
-              {[10, 25, 50].map((n) => (
-                <option key={n} value={n}>{n} Records Per Page</option>
+              {[25, 50, 500].map((n) => (
+                <option key={n} value={n}>{n === 500 ? "All Records" : `${n} Records Per Page`}</option>
               ))}
             </select>
           </div>
