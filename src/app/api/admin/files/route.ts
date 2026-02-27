@@ -71,7 +71,9 @@ export async function POST(req: NextRequest) {
       const assembledBuffer = Buffer.concat(chunks.map((c) => c.data));
       await ChunkBuffer.deleteMany({ uploadId });
 
-      // Create ImportFile record and run import with assembled buffer
+      // Create ImportFile record and run import with assembled buffer.
+      // Don't store fileData here — the assembled buffer can exceed MongoDB's 16MB
+      // document limit for large files; the buffer is passed directly to runImport.
       const importFile = await ImportFile.create({
         filename,
         fileType,
@@ -80,7 +82,6 @@ export async function POST(req: NextRequest) {
         year,
         month,
         storagePath: `mongodb-chunk:${uploadId}`,
-        fileData: assembledBuffer,
       });
 
       try {
