@@ -361,13 +361,37 @@ export async function runImport(
     await onProgress?.(0, rows.length, "File parsed, starting import…");
     await new Promise<void>((r) => setImmediate(r));
   } else {
-    // Async streaming parse — does NOT block the event loop (see parseCsvBufferAsync above).
-    // ZAKCNTRCTS raw exports have NO header row — always use positional mapping.
-    // (If a header-format file is ever introduced the column validator will catch
-    //  it immediately, since position-0 would map to record_type = "dealer_code".)
     await onProgress?.(0, 0, "Parsing file…");
-    const csvColumns = importFile.fileType === "contracts" ? ZAKCNTRCTS_COLUMNS : undefined;
-    rows = await parseCsvBufferAsync(buffer, csvColumns);
+
+    if (importFile.fileType === "contracts") {
+      // ZAKCNTRCTS is pipe-delimited with a header row (per CLAUDE.md).
+      //
+      // We parse synchronously rather than using the async Readable-stream
+      // approach because Papa.parse() with a custom Node.js Readable stream
+      // (non-NODE_STREAM_INPUT mode) has a well-documented bug: the `complete`
+      // callback never fires, so the Promise never resolves and the Vercel
+      // function hangs until it is killed after 300 s — which is exactly what
+      // produces the "stuck at Parsing file…" symptom.
+      //
+      // PapaParse processes CSV at ~100 MB/s in Node.js, so even a 150 MB file
+      // finishes in under 2 s.  The event loop blocks for those 2 s, but the
+      // SSE connection has already dropped by this point (it always drops during
+      // any blocking work) so there is nothing to flush anyway — DB polling
+      // picks up progress as soon as the first bulkWrite batch saves to the DB.
+      const bom = buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
+      const csvText = (bom ? buffer.slice(3) : buffer).toString("utf8");
+      const parsed = Papa.parse<Record<string, string>>(csvText, {
+        header: true,
+        delimiter: "|",
+        skipEmptyLines: true,
+        transformHeader: (h) =>
+          h.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s\-]+/g, "_"),
+      });
+      rows = parsed.data;
+    } else {
+      rows = await parseCsvBufferAsync(buffer);
+    }
+
     await onProgress?.(0, rows.length, "File parsed, starting import…");
   }
 

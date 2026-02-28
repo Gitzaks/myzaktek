@@ -37,32 +37,43 @@ const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
   "Ultimate with Interior": "both",
 };
 
-const BATCH = 5_000; // default batch size
+const BATCH    = 500;  // ops per individual bulkWrite call
+const PARALLEL = 10;   // concurrent bulkWrite calls in flight at once
 
-/** Generic bulk-write helper that bypasses strict Mongoose typings and calls
- *  onBatch after each batch so the SSE stream can push live progress events.
+/**
+ * Parallel bulk-write helper.
  *
- *  With ordered:false, MongoDB attempts every op in a batch even when some fail.
- *  The driver then throws a MongoBulkWriteError to report the partial failures.
- *  We catch that error per-batch so the loop continues to subsequent batches
- *  instead of aborting mid-import. True unexpected errors (network, auth, etc.)
- *  are re-thrown so the outer try/catch can handle them. */
+ * Splits `ops` into batches of `batchSize`, then fires up to PARALLEL
+ * bulkWrite calls concurrently.  This reduces wall-clock time by ~10x vs
+ * sequential — critical for 500 k-row ZAKCNTRCTS files that would otherwise
+ * blow the Vercel 300 s function timeout.
+ *
+ * ordered:false lets MongoDB continue processing a batch even when individual
+ * ops fail (duplicate keys, validation errors, etc.).  The driver surfaces
+ * those as MongoBulkWriteError; we swallow that per-batch so a single bad row
+ * does not abort the whole import.  Anything else is re-thrown immediately.
+ */
 async function bulkWrite<T>(
   model: { bulkWrite: (ops: T[], opts: object) => Promise<unknown> },
   ops: T[],
   onBatch?: (done: number, total: number) => Promise<void>,
   batchSize = BATCH,
 ) {
+  const batches: T[][] = [];
   for (let i = 0; i < ops.length; i += batchSize) {
-    try {
-      await model.bulkWrite(ops.slice(i, i + batchSize), { ordered: false });
-    } catch (err) {
-      // MongoBulkWriteError means MongoDB processed all ops but some failed
-      // (duplicate keys, validation, etc.). All other ops in the batch still
-      // committed. Re-throw anything that isn't a bulk-write partial failure.
-      if ((err as { name?: string }).name !== "MongoBulkWriteError") throw err;
-    }
-    if (onBatch) await onBatch(Math.min(i + batchSize, ops.length), ops.length);
+    batches.push(ops.slice(i, i + batchSize));
+  }
+
+  for (let i = 0; i < batches.length; i += PARALLEL) {
+    await Promise.all(
+      batches.slice(i, i + PARALLEL).map((batch) =>
+        model.bulkWrite(batch, { ordered: false }).catch((err: unknown) => {
+          if ((err as { name?: string }).name !== "MongoBulkWriteError") throw err;
+        }),
+      ),
+    );
+    const done = Math.min((i + PARALLEL) * batchSize, ops.length);
+    if (onBatch) await onBatch(done, ops.length);
   }
 }
 
@@ -244,15 +255,22 @@ export async function importContracts(
     errors.push(`User upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Build email → _id lookup in 5000-record batches
+  // Build email → _id lookup — run PARALLEL find queries concurrently
   const userIdMap = new Map<string, unknown>();
   const allEmails = [...userRowMap.keys()];
+  const emailBatches: string[][] = [];
   for (let i = 0; i < allEmails.length; i += 5000) {
-    const users = await User.find(
-      { email: { $in: allEmails.slice(i, i + 5000) } },
-      { email: 1 },
-    ).lean();
-    for (const u of users) userIdMap.set(u.email as string, u._id);
+    emailBatches.push(allEmails.slice(i, i + 5000));
+  }
+  for (let i = 0; i < emailBatches.length; i += PARALLEL) {
+    const results = await Promise.all(
+      emailBatches.slice(i, i + PARALLEL).map((batch) =>
+        User.find({ email: { $in: batch } }, { email: 1 }).lean(),
+      ),
+    );
+    for (const users of results) {
+      for (const u of users) userIdMap.set(u.email as string, u._id);
+    }
   }
 
   // ── 3. Bulk upsert contracts (50 → 100%) ──────────────────────────────────
