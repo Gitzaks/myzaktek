@@ -282,8 +282,14 @@ export async function runImport(
   let rows: Record<string, string>[];
 
   if (isExcel) {
+    // Yield + emit progress so the SSE "Parsing file…" event flushes to the
+    // TCP socket *before* XLSX.read blocks the event loop on large files.
+    await onProgress?.(0, 0, "Parsing file…");
+    await new Promise<void>((r) => setImmediate(r));
     const wb = XLSX.read(buffer, { type: "buffer" });
     rows = normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]);
+    await onProgress?.(0, rows.length, "File parsed, starting import…");
+    await new Promise<void>((r) => setImmediate(r));
   } else {
     // Async streaming parse — does NOT block the event loop (see parseCsvBufferAsync above).
     // ZAKCNTRCTS raw exports have NO header row — always use positional mapping.
