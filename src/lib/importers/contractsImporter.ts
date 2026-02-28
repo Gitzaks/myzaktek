@@ -37,8 +37,8 @@ const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
   "Ultimate with Interior": "both",
 };
 
-const BATCH    = 500;  // ops per individual bulkWrite call
-const PARALLEL = 10;   // concurrent bulkWrite calls in flight at once
+const BATCH    = 2000; // ops per individual bulkWrite call
+const PARALLEL = 20;   // concurrent bulkWrite calls in flight at once
 
 /**
  * Parallel bulk-write helper.
