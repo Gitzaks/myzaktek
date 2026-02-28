@@ -101,6 +101,7 @@ export async function GET(
             // can show DB-backed % instead of the static "Processing…" text.
             importFile.processedRows = processed;
             if (total > 0) importFile.recordsTotal = total;
+            if (message) importFile.statusMessage = message;
             if (Date.now() - lastDbSave >= 5000) {
               await importFile.save();
               lastDbSave = Date.now();

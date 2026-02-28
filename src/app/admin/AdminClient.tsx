@@ -14,6 +14,7 @@ interface ImportFile {
   recordsTotal?: number;
   recordsImported?: number;
   processedRows?: number;
+  statusMessage?: string;
   errorMessage?: string;
   importErrors?: string[];
   createdAt: string;
@@ -626,25 +627,22 @@ function FileSection({
                             </span>
 
                             {/* Progress bar — live when streaming, DB-backed when polling */}
-                            {(isStreaming || (f.status === "processing" && !isStreaming && dbPct != null)) && (
+                            {(isStreaming || f.status === "processing") && !timedOut && (
                               <div className="mt-1.5 w-full min-w-[220px]">
                                 <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                                   <div
                                     className={`h-2 rounded-full transition-all duration-300 ${isStreaming ? "bg-[#1565a8]" : "bg-blue-300"}`}
-                                    style={{ width: `${isStreaming ? stream.pct : dbPct}%` }}
+                                    style={{ width: `${isStreaming ? stream.pct : (dbPct ?? 0)}%` }}
                                   />
                                 </div>
-                                {isStreaming && stream.message && (
-                                  <div className="text-xs text-gray-500 mt-0.5 text-left truncate max-w-[260px]"
-                                    title={stream.message}>
-                                    {stream.message}
-                                  </div>
-                                )}
-                                {!isStreaming && dbPct != null && (
-                                  <div className="text-xs text-gray-400 mt-0.5 text-left">
-                                    Running in background — refreshing…
-                                  </div>
-                                )}
+                                {/* Always show the descriptive message — from SSE when live,
+                                    from the DB-persisted statusMessage when polling. */}
+                                <div className="text-xs text-gray-500 mt-0.5 text-left truncate max-w-[260px]"
+                                  title={isStreaming ? stream.message : (f.statusMessage ?? "")}>
+                                  {isStreaming
+                                    ? (stream.message ?? "Importing…")
+                                    : (f.statusMessage ?? "Processing…")}
+                                </div>
                               </div>
                             )}
                           </>

@@ -13,6 +13,7 @@ export interface IImportFileDocument extends Document {
   recordsTotal?: number;
   recordsImported?: number;
   processedRows?: number;
+  statusMessage?: string;
   errorMessage?: string;
   importErrors?: string[];
   storagePath: string;
@@ -40,6 +41,7 @@ const ImportFileSchema = new Schema<IImportFileDocument>(
     recordsTotal: { type: Number },
     recordsImported: { type: Number },
     processedRows: { type: Number },
+    statusMessage: { type: String },
     errorMessage: { type: String },
     importErrors: [{ type: String }],
     storagePath: { type: String, required: true },
