@@ -43,25 +43,21 @@ function normalizeExcelSheet(ws: XLSX.WorkSheet): Record<string, string>[] {
  * (e.g. unsupported environment).
  */
 async function parseXlsxAsync(buffer: Buffer): Promise<Record<string, string>[]> {
-  // Inline worker script — runs in a plain Node.js CJS context.
-  // `require('xlsx')` resolves from node_modules because next.config.js marks
-  // xlsx as a serverExternalPackage (not bundled by webpack).
+  // The worker converts the XLSX to a CSV string (sheet_to_csv) rather than
+  // building and postMessage-ing an array of row objects.  For a 500 k-row
+  // sheet the old approach serialised ~500 k JS objects across the thread
+  // boundary, which took tens of seconds and triggered the Vercel timeout.
+  // A CSV string is a single contiguous allocation and transfers in < 1 s;
+  // the main thread then parses it with Papa.parse synchronously.
   const script = `
     const { parentPort, workerData } = require('worker_threads');
     const XLSX = require('xlsx');
     try {
       const buf = Buffer.from(new Uint8Array(workerData.buffer));
-      const wb  = XLSX.read(buf, { type: 'buffer' });
+      const wb  = XLSX.read(buf, { type: 'buffer', cellDates: false, cellNF: false, cellStyles: false });
       const ws  = wb.Sheets[wb.SheetNames[0]];
-      const rawRows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      const rows = rawRows.map(row => {
-        const out = {};
-        for (const [k, v] of Object.entries(row)) {
-          out[k.trim().toLowerCase().replace(/[\\s\\-]+/g, '_')] = String(v ?? '');
-        }
-        return out;
-      });
-      parentPort.postMessage({ ok: true, rows });
+      const csv = XLSX.utils.sheet_to_csv(ws, { FS: ',', RS: '\\n', blankrows: false });
+      parentPort.postMessage({ ok: true, csv });
     } catch (err) {
       parentPort.postMessage({ ok: false, error: err.message });
     }
@@ -71,7 +67,7 @@ async function parseXlsxAsync(buffer: Buffer): Promise<Record<string, string>[]>
   const ab = new ArrayBuffer(buffer.length);
   new Uint8Array(ab).set(buffer);
 
-  return new Promise((resolve, reject) => {
+  const csv = await new Promise<string>((resolve, reject) => {
     let worker: Worker;
     try {
       worker = new Worker(script, {
@@ -80,20 +76,21 @@ async function parseXlsxAsync(buffer: Buffer): Promise<Record<string, string>[]>
         transferList: [ab],
       });
     } catch {
-      // Worker creation failed — fall back to synchronous parse.
-      const wb = XLSX.read(buffer, { type: "buffer" });
-      return resolve(normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]));
+      // Worker creation failed — fall back to synchronous in-process parse.
+      const wb = XLSX.read(buffer, { type: "buffer", cellDates: false, cellNF: false, cellStyles: false });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      return resolve(XLSX.utils.sheet_to_csv(ws, { FS: ",", RS: "\n", blankrows: false }));
     }
 
-    worker.on("message", (msg: { ok: boolean; rows?: Record<string, string>[]; error?: string }) => {
-      if (msg.ok) resolve(msg.rows!);
+    worker.on("message", (msg: { ok: boolean; csv?: string; error?: string }) => {
+      if (msg.ok) resolve(msg.csv!);
       else reject(new Error(msg.error));
     });
     worker.on("error", (err) => {
-      // Worker failed at runtime — fall back to synchronous parse.
       try {
-        const wb = XLSX.read(buffer, { type: "buffer" });
-        resolve(normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]));
+        const wb = XLSX.read(buffer, { type: "buffer", cellDates: false, cellNF: false, cellStyles: false });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        resolve(XLSX.utils.sheet_to_csv(ws, { FS: ",", RS: "\n", blankrows: false }));
       } catch {
         reject(err);
       }
@@ -102,6 +99,15 @@ async function parseXlsxAsync(buffer: Buffer): Promise<Record<string, string>[]>
       if (code !== 0) reject(new Error(`XLSX worker exited with code ${code}`));
     });
   });
+
+  // Parse the CSV string synchronously on the main thread — fast and reliable.
+  const parsed = Papa.parse<Record<string, string>>(csv, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (h) =>
+      h.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s\-]+/g, "_"),
+  });
+  return parsed.data;
 }
 
 /**
