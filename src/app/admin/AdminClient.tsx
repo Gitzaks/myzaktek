@@ -17,6 +17,7 @@ interface ImportFile {
   errorMessage?: string;
   importErrors?: string[];
   createdAt: string;
+  updatedAt: string;
 }
 
 interface AutoPointExport {
@@ -576,10 +577,13 @@ function FileSection({
             <tbody>
               {typeFiles.map((f, i) => {
                 const isStreaming = stream?.fileId === f._id;
+                // Use updatedAt (last DB write) so an actively-running import
+                // is never falsely flagged as timed-out.  Only fires when the
+                // Vercel function has truly died (no DB updates for 10 min).
                 const timedOut   =
                   f.status === "processing" &&
                   !isStreaming &&
-                  Date.now() - new Date(f.createdAt).getTime() > 10 * 60 * 1000;
+                  Date.now() - new Date(f.updatedAt ?? f.createdAt).getTime() > 10 * 60 * 1000;
 
                 return (
                   <tr key={f._id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>

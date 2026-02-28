@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import Dealer from "@/models/Dealer";
 import Contract from "@/models/Contract";
 import User from "@/models/User";
 import ImportFile from "@/models/ImportFile";
+import ChunkBuffer from "@/models/ChunkBuffer";
 
 export async function GET() {
   const session = await auth();
@@ -31,24 +33,64 @@ export async function GET() {
       .lean(),
   ]);
 
-  // Inspect the most recent import's fileData buffer
+  // Inspect the most recent import's file buffer (works for both direct
+  // fileData uploads and chunked uploads stored in ChunkBuffer).
   const latestImport = recentImports[0];
   let fileDataInfo: Record<string, unknown> = { status: "no recent imports" };
   if (latestImport) {
-    const fd = latestImport.fileData;
-    if (!fd) {
-      fileDataInfo = { status: "fileData is missing on document" };
-    } else {
-      const buf = Buffer.from(fd as Buffer);
-      const text = buf.toString("utf-8").slice(0, 500);
-      const parsed = Papa.parse<Record<string, string>>(text, { header: true, preview: 3 });
+    let buf: Buffer | null = null;
+
+    if (latestImport.fileData) {
+      buf = Buffer.from(latestImport.fileData as Buffer);
+    } else if (latestImport.storagePath?.startsWith("mongodb-chunk:")) {
+      const uploadId = latestImport.storagePath.replace("mongodb-chunk:", "");
+      const chunks = await ChunkBuffer.find({ uploadId }).sort({ chunkIndex: 1 });
+      if (chunks.length > 0) {
+        buf = Buffer.concat(chunks.map((c) => c.data));
+      }
+    }
+
+    if (!buf) {
       fileDataInfo = {
-        bufferByteLength: buf.byteLength,
-        first500chars: text,
-        parsedHeaders: parsed.meta.fields ?? [],
-        parsedRowCount: parsed.data.length,
-        sampleRow: parsed.data[0] ?? null,
+        status: "file data unavailable (chunked upload already consumed or file data missing)",
+        filename: latestImport.filename,
+        storagePath: latestImport.storagePath,
       };
+    } else {
+      const isXlsx = latestImport.filename?.toLowerCase().match(/\.xlsx?$/);
+      if (isXlsx) {
+        try {
+          const wb = XLSX.read(buf, { type: "buffer" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+          const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+          fileDataInfo = {
+            bufferByteLength: buf.byteLength,
+            format: "xlsx",
+            sheetName: wb.SheetNames[0],
+            parsedHeaders: headers,
+            parsedRowCount: rows.length,
+            sampleRow: rows[0] ?? null,
+          };
+        } catch (e) {
+          fileDataInfo = { status: "xlsx parse error", error: String(e) };
+        }
+      } else {
+        const text = buf.toString("utf-8").slice(0, 500);
+        const parsed = Papa.parse<Record<string, string>>(text, {
+          header: true,
+          delimiter: text.includes("|") ? "|" : ",",
+          preview: 3,
+        });
+        fileDataInfo = {
+          bufferByteLength: buf.byteLength,
+          format: "csv",
+          first500chars: text,
+          parsedHeaders: parsed.meta.fields ?? [],
+          parsedRowCount: parsed.data.length,
+          sampleRow: parsed.data[0] ?? null,
+        };
+      }
     }
   }
 
