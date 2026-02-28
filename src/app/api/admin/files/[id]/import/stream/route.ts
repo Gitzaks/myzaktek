@@ -67,6 +67,7 @@ export async function GET(
       }, 20_000);
 
       let lastDbSave = Date.now();
+      let firstProgressSaved = false;
 
       try {
         importFile.status = "processing";
@@ -96,15 +97,16 @@ export async function GET(
             // Yield so each progress event is flushed before the next
             // MongoDB operation starts.
             await new Promise<void>((r) => setImmediate(r));
-            // Throttle DB saves to every 5 seconds.
-            // Always update processedRows and recordsTotal so a page-refresh
-            // can show DB-backed % instead of the static "Processing…" text.
             importFile.processedRows = processed;
             if (total > 0) importFile.recordsTotal = total;
             if (message) importFile.statusMessage = message;
-            if (Date.now() - lastDbSave >= 5000) {
+            // Always save on the first progress event so recordsTotal lands in
+            // the DB immediately — this lets DB-polling mode show a real %
+            // even if the SSE connection has already dropped.
+            if (!firstProgressSaved || Date.now() - lastDbSave >= 5000) {
               await importFile.save();
               lastDbSave = Date.now();
+              firstProgressSaved = true;
             }
           },
         );

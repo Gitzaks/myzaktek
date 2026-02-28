@@ -396,6 +396,41 @@ function BatchUploadSection({ onRefresh }: { onRefresh: () => void }) {
   );
 }
 
+// ── Error report download ────────────────────────────────────────────────────
+
+function downloadErrorReport(f: ImportFile) {
+  const lines = [
+    "Import Error Report",
+    "===================",
+    `File:          ${f.filename}`,
+    `Type:          ${FILE_TYPE_LABELS[f.fileType]}`,
+    `Uploaded:      ${new Date(f.createdAt).toLocaleString()}`,
+    `Last Updated:  ${new Date(f.updatedAt).toLocaleString()}`,
+    `Status:        ${f.status}`,
+    "",
+    `Records Total:    ${f.recordsTotal ?? "unknown"}`,
+    `Records Imported: ${f.recordsImported ?? 0}`,
+    `Rows Processed:   ${f.processedRows ?? 0}`,
+    "",
+    `Error:        ${f.errorMessage ?? "(none)"}`,
+    `Last Message: ${f.statusMessage ?? "(none)"}`,
+    "",
+  ];
+  if (f.importErrors && f.importErrors.length > 0) {
+    lines.push(`Row Errors (${f.importErrors.length}):`);
+    f.importErrors.forEach((e, i) => lines.push(`  ${i + 1}. ${e}`));
+  } else {
+    lines.push("Row Errors: none");
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = `import-error-${f.filename}-${new Date(f.updatedAt).toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── FileSection ─────────────────────────────────────────────────────────────
 
 function FileSection({
@@ -666,6 +701,20 @@ function FileSection({
                               {showErrorsId === f._id ? "Hide" : "View"}
                             </button>
                           )}
+                          <button
+                            onClick={() => downloadErrorReport(f)}
+                            className="ml-2 underline text-blue-500 hover:text-blue-700">
+                            Download Report
+                          </button>
+                        </div>
+                      )}
+                      {!f.errorMessage && timedOut && (
+                        <div className="text-xs mt-0.5">
+                          <button
+                            onClick={() => downloadErrorReport(f)}
+                            className="underline text-blue-500 hover:text-blue-700">
+                            Download Report
+                          </button>
                         </div>
                       )}
                       {showErrorsId === f._id && f.importErrors && (
