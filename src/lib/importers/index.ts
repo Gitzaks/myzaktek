@@ -1,5 +1,6 @@
 import { readFile } from "fs/promises";
 import { Readable } from "stream";
+import { Worker } from "worker_threads";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import type { IImportFileDocument } from "@/models/ImportFile";
@@ -30,6 +31,76 @@ function normalizeExcelSheet(ws: XLSX.WorkSheet): Record<string, string>[] {
       normalized[k] = String(value);
     }
     return normalized;
+  });
+}
+
+/**
+ * Parse an XLSX buffer inside a worker_threads worker so XLSX.read() does NOT
+ * block the main event loop.  The main thread stays free to send SSE heartbeats
+ * and progress events while the CPU-bound parse runs in the background.
+ *
+ * Falls back to synchronous in-process parsing if the worker cannot be created
+ * (e.g. unsupported environment).
+ */
+async function parseXlsxAsync(buffer: Buffer): Promise<Record<string, string>[]> {
+  // Inline worker script — runs in a plain Node.js CJS context.
+  // `require('xlsx')` resolves from node_modules because next.config.js marks
+  // xlsx as a serverExternalPackage (not bundled by webpack).
+  const script = `
+    const { parentPort, workerData } = require('worker_threads');
+    const XLSX = require('xlsx');
+    try {
+      const buf = Buffer.from(new Uint8Array(workerData.buffer));
+      const wb  = XLSX.read(buf, { type: 'buffer' });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      const rows = rawRows.map(row => {
+        const out = {};
+        for (const [k, v] of Object.entries(row)) {
+          out[k.trim().toLowerCase().replace(/[\\s\\-]+/g, '_')] = String(v ?? '');
+        }
+        return out;
+      });
+      parentPort.postMessage({ ok: true, rows });
+    } catch (err) {
+      parentPort.postMessage({ ok: false, error: err.message });
+    }
+  `;
+
+  // Copy the buffer into a transferable ArrayBuffer (zero-copy send to worker).
+  const ab = new ArrayBuffer(buffer.length);
+  new Uint8Array(ab).set(buffer);
+
+  return new Promise((resolve, reject) => {
+    let worker: Worker;
+    try {
+      worker = new Worker(script, {
+        eval: true,
+        workerData: { buffer: ab },
+        transferList: [ab],
+      });
+    } catch {
+      // Worker creation failed — fall back to synchronous parse.
+      const wb = XLSX.read(buffer, { type: "buffer" });
+      return resolve(normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]));
+    }
+
+    worker.on("message", (msg: { ok: boolean; rows?: Record<string, string>[]; error?: string }) => {
+      if (msg.ok) resolve(msg.rows!);
+      else reject(new Error(msg.error));
+    });
+    worker.on("error", (err) => {
+      // Worker failed at runtime — fall back to synchronous parse.
+      try {
+        const wb = XLSX.read(buffer, { type: "buffer" });
+        resolve(normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]));
+      } catch {
+        reject(err);
+      }
+    });
+    worker.on("exit", (code) => {
+      if (code !== 0) reject(new Error(`XLSX worker exited with code ${code}`));
+    });
   });
 }
 
@@ -282,15 +353,11 @@ export async function runImport(
   let rows: Record<string, string>[];
 
   if (isExcel) {
-    // Yield + emit progress so the SSE "Parsing file…" event flushes to the
-    // TCP socket *before* XLSX.read blocks the event loop on large files.
+    // parseXlsxAsync runs XLSX.read + sheet_to_json inside a worker_threads
+    // worker, so the main event loop stays free to send SSE heartbeats and
+    // progress events while the CPU-bound parse runs in the background.
     await onProgress?.(0, 0, "Parsing file…");
-    await new Promise<void>((r) => setImmediate(r));
-    const wb = XLSX.read(buffer, { type: "buffer" });
-    // Yield between the two blocking ops so the TCP stack can flush
-    // any queued SSE data between them.
-    await new Promise<void>((r) => setImmediate(r));
-    rows = normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]);
+    rows = await parseXlsxAsync(buffer);
     await onProgress?.(0, rows.length, "File parsed, starting import…");
     await new Promise<void>((r) => setImmediate(r));
   } else {

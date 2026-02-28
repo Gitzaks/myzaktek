@@ -177,8 +177,12 @@ function openImportStream(
   };
 
   es.onerror = () => {
+    // The import continues running on the server even when the SSE transport
+    // drops (e.g. the event loop was briefly blocked during XLSX.read).
+    // Silently close the EventSource and fall back to DB-backed polling so
+    // the user sees "Processing… X%" updating every 5 s instead of an error.
     es.close();
-    onError("Connection to import stream lost — check the status table.");
+    onDone();
   };
 
   return es;
