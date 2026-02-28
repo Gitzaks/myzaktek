@@ -38,7 +38,7 @@ const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
 };
 
 const BATCH    = 2000; // ops per individual bulkWrite call
-const PARALLEL = 20;   // concurrent bulkWrite calls in flight at once
+const PARALLEL = 50;   // concurrent bulkWrite calls — match maxPoolSize
 
 /**
  * Parallel bulk-write helper.
