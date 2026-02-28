@@ -287,6 +287,9 @@ export async function runImport(
     await onProgress?.(0, 0, "Parsing file…");
     await new Promise<void>((r) => setImmediate(r));
     const wb = XLSX.read(buffer, { type: "buffer" });
+    // Yield between the two blocking ops so the TCP stack can flush
+    // any queued SSE data between them.
+    await new Promise<void>((r) => setImmediate(r));
     rows = normalizeExcelSheet(wb.Sheets[wb.SheetNames[0]]);
     await onProgress?.(0, rows.length, "File parsed, starting import…");
     await new Promise<void>((r) => setImmediate(r));

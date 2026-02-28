@@ -83,19 +83,19 @@ export async function GET(
           importFile,
           buffer,
           async (processed, total, message) => {
-            // Skip sending if client disconnected (but still update DB)
-            if (!req.signal?.aborted) {
-              send({
-                type: "progress",
-                processed,
-                total,
-                pct: total > 0 ? Math.round((processed / total) * 100) : 0,
-                message: message ?? `Processing ${processed.toLocaleString()} / ${total.toLocaleString()} rows`,
-              });
-              // Yield so each progress event is flushed before the next
-              // MongoDB operation starts.
-              await new Promise<void>((r) => setImmediate(r));
-            }
+            // Always attempt to send — req.signal can be prematurely flagged
+            // as aborted on Vercel even while the connection is still alive.
+            // send() already swallows errors if the client has truly disconnected.
+            send({
+              type: "progress",
+              processed,
+              total,
+              pct: total > 0 ? Math.round((processed / total) * 100) : 0,
+              message: message ?? `Processing ${processed.toLocaleString()} / ${total.toLocaleString()} rows`,
+            });
+            // Yield so each progress event is flushed before the next
+            // MongoDB operation starts.
+            await new Promise<void>((r) => setImmediate(r));
             // Throttle DB saves to every 5 seconds.
             // Always update processedRows and recordsTotal so a page-refresh
             // can show DB-backed % instead of the static "Processing…" text.
