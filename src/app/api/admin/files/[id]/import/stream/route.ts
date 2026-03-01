@@ -24,6 +24,22 @@ export async function GET(
     return NextResponse.json({ error: "Import record not found" }, { status: 404 });
   }
 
+  // Contracts are processed by Inngest in the background.
+  // Return immediately WITHOUT reading or deleting chunks — Inngest steps
+  // need the chunks intact. The client switches to 5-second DB-polling.
+  if (importFile.fileType === "contracts") {
+    const encoder = new TextEncoder();
+    return new Response(
+      encoder.encode('data: {"type":"done","background":true}\n\n'),
+      {
+        headers: {
+          "Content-Type":  "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+        },
+      },
+    );
+  }
+
   // Assemble buffer from chunked upload or existing fileData
   let buffer: Buffer | undefined;
   if (importFile.storagePath?.startsWith("mongodb-chunk:")) {
@@ -44,22 +60,6 @@ export async function GET(
     return NextResponse.json(
       { error: "File data not found — please re-upload the file." },
       { status: 404 },
-    );
-  }
-
-  // Contracts are processed by Inngest in the background.
-  // Send a single "done" event so the client closes the EventSource and
-  // switches to its 5-second DB-polling fallback automatically.
-  if (importFile.fileType === "contracts") {
-    const encoder = new TextEncoder();
-    return new Response(
-      encoder.encode('data: {"type":"done","background":true}\n\n'),
-      {
-        headers: {
-          "Content-Type":  "text/event-stream",
-          "Cache-Control": "no-cache, no-transform",
-        },
-      },
     );
   }
 

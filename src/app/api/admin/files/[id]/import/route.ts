@@ -32,10 +32,20 @@ export async function POST(
     importFile.statusMessage = "Queued…";
     await importFile.save();
 
-    await inngest.send({
-      name: "import/requested",
-      data: { fileId: String(importFile._id) },
-    });
+    try {
+      await inngest.send({
+        name: "import/requested",
+        data: { fileId: String(importFile._id) },
+      });
+    } catch (err) {
+      importFile.status = "import_failed";
+      importFile.errorMessage = `Failed to queue import: ${err instanceof Error ? err.message : String(err)}`;
+      await importFile.save();
+      return NextResponse.json(
+        { error: importFile.errorMessage },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json(
       { processing: true, fileId: String(importFile._id) },
