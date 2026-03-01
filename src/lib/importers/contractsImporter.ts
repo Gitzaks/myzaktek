@@ -4,22 +4,11 @@ import User from "@/models/User";
 import Contract from "@/models/Contract";
 import type { ImportResult, ProgressFn } from "./index";
 
-/**
- * ZAKCNTRCTS import — header row present, columns named exactly as they appear.
- * A–AL (38 columns): dealer_code … internal_cost
- *
- * Uses bulk operations (bulkWrite) throughout to handle large files efficiently.
- * onProgress is called at every batch boundary so the SSE stream can push
- * live progress bars and phase descriptions to the browser.
- */
-
 const PLAN_MAP: Record<string, "Basic" | "Basic with Interior" | "Ultimate" | "Ultimate with Interior"> = {
-  // Human-readable names (header-based CSV format)
   "basic":                  "Basic",
   "basic with interior":    "Basic with Interior",
   "ultimate":               "Ultimate",
   "ultimate with interior": "Ultimate with Interior",
-  // ZAK short codes (headerless CSV — coverage col contains these)
   "bsc":                    "Basic",
   "bscnc":                  "Basic",
   "bscwint":                "Basic with Interior",
@@ -37,17 +26,11 @@ const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
   "Ultimate with Interior": "both",
 };
 
-const BATCH    = 2000; // ops per individual bulkWrite call
-const PARALLEL = 8;    // concurrent bulkWrite calls — keep well below pool size
-                       // to avoid connection saturation stalling Promise.all
+const BATCH    = 2000;
+const PARALLEL = 8;    // keep well below pool size to avoid connection saturation
 
-const BULK_TIMEOUT_MS = 60_000; // 60 s hard limit per bulkWrite; prevents a
-                                 // single hung Atlas connection from blocking forever
+const BULK_TIMEOUT_MS = 60_000;
 
-/**
- * Resolves `p` or rejects with a timeout error after `ms` milliseconds.
- * Prevents a single hung MongoDB connection from freezing Promise.all forever.
- */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     p,
@@ -57,19 +40,6 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
-/**
- * Parallel bulk-write helper.
- *
- * Splits `ops` into batches of `batchSize`, then fires up to PARALLEL
- * bulkWrite calls concurrently.  Keeping PARALLEL low (8) prevents Atlas
- * connection-pool saturation — the previous value of 50 caused Promise.all
- * to stall indefinitely once all pool connections were in use and one hung.
- *
- * ordered:false lets MongoDB continue processing a batch even when individual
- * ops fail (duplicate keys, validation errors, etc.).  The driver surfaces
- * those as MongoBulkWriteError; we swallow that per-batch so a single bad row
- * does not abort the whole import.  Anything else is re-thrown immediately.
- */
 async function bulkWrite<T>(
   model: { bulkWrite: (ops: T[], opts: object) => Promise<unknown> },
   ops: T[],
@@ -128,65 +98,42 @@ function agreementId(row: Record<string, string>): string {
   return `${row.agreement?.trim()}-${row.agreement_suffix?.trim()}`;
 }
 
-export async function importContracts(
-  rows: Record<string, string>[],
-  onProgress?: ProgressFn,
-): Promise<ImportResult> {
-  if (rows.length === 0) return { recordsTotal: 0, recordsImported: 0 };
-  const total = rows.length;
-  const phaseStart = Date.now();
+// ── Standalone phase exports (used by the Inngest background function) ────────
 
-  const errors: string[] = [];
-  const placeholderHash = await bcrypt.hash("zaktek-import-placeholder", 4);
-
-  // ── 0. Column-name sanity check ───────────────────────────────────────────
-  // Run this BEFORE any DB writes so mismatches surface immediately.
+/**
+ * Validates column names and dealer count before any DB writes.
+ * Returns an error string on failure, null on success.
+ */
+export function validateContractColumns(rows: Record<string, string>[]): string | null {
+  if (rows.length === 0) return null;
   const foundKeys = new Set(Object.keys(rows[0]));
   const REQUIRED = ["agreement", "agreement_suffix", "dealer_code", "expiration_date", "coverage", "vin"];
-  const missing   = REQUIRED.filter((k) => !foundKeys.has(k));
+  const missing  = REQUIRED.filter((k) => !foundKeys.has(k));
   if (missing.length > 0) {
-    errors.push(
+    return (
       `Column mapping mismatch — missing: [${missing.join(", ")}]. ` +
-      `All ${foundKeys.size} columns found: [${[...foundKeys].join(", ")}]`,
+      `Found ${foundKeys.size} columns: [${[...foundKeys].join(", ")}]`
     );
-    // Bail out — no point writing garbage data to the DB.
-    return { recordsTotal: rows.length, recordsImported: 0, errors };
   }
+  const dealerCodes = new Set(rows.map((r) => r.dealer_code?.trim()).filter(Boolean));
+  if (dealerCodes.size > 500) {
+    return (
+      `Column mapping error — found ${dealerCodes.size} unique dealer_code values (expected ≤500). ` +
+      `Samples: [${[...dealerCodes].slice(0, 5).join(", ")}]`
+    );
+  }
+  return null;
+}
 
-  // ── 1. Bulk upsert dealers (0 → 5%) ───────────────────────────────────────
+/** Phase 1: upsert all unique dealers found in the rows. */
+export async function upsertDealers(rows: Record<string, string>[]): Promise<void> {
   const dealerRowMap = new Map<string, Record<string, string>>();
   for (const row of rows) {
     const code = row.dealer_code?.trim();
     if (code && !dealerRowMap.has(code)) dealerRowMap.set(code, row);
   }
 
-  // Count unique customers upfront for the diagnostic summary
-  const _customerPreview = new Set<string>();
-  for (const row of rows) _customerPreview.add(rowEmail(row));
-  errors.push(
-    `[INFO] Import started — rows: ${total.toLocaleString()}, ` +
-    `unique dealers: ${dealerRowMap.size.toLocaleString()}, ` +
-    `unique customers: ${_customerPreview.size.toLocaleString()}, ` +
-    `unique contracts: ${new Set(rows.map(agreementId)).size.toLocaleString()}, ` +
-    `columns: [${[...foundKeys].join(", ")}]`,
-  );
-
-  // Sanity check: ZAKCNTRCTS should have ~85 unique dealer codes, not thousands.
-  // A large count means the dealer_code column is misidentified (e.g. the file
-  // has a different column order than expected). Bail out immediately with a
-  // diagnostic so the admin can see which values were found in that column.
-  const MAX_DEALERS = 500;
-  if (dealerRowMap.size > MAX_DEALERS) {
-    errors.push(
-      `Column mapping error — found ${dealerRowMap.size.toLocaleString()} unique values in ` +
-      `dealer_code column (expected ≤${MAX_DEALERS}). ` +
-      `First 5 sample values: [${[...dealerRowMap.keys()].slice(0, 5).join(", ")}]. ` +
-      `All ${foundKeys.size} columns detected: [${[...foundKeys].join(", ")}]`,
-    );
-    return { recordsTotal: rows.length, recordsImported: 0, errors };
-  }
-
-  const dealerOps = [...dealerRowMap.entries()].map(([code, row]) => {
+  const ops = [...dealerRowMap.entries()].map(([code, row]) => {
     const dealerName  = row.dealer_name?.trim()  || undefined;
     const dealerPhone = (row.dealer_phone ?? row.dealer_phone_number ?? row.phone_number ?? row.phone ?? "").trim() || undefined;
     const dealerAddr  = (row.dealer_address_1 ?? row.dealer_address ?? row.address_1 ?? row.address ?? "").trim() || undefined;
@@ -223,33 +170,22 @@ export async function importContracts(
     };
   });
 
-  try {
-    await bulkWrite(Dealer, dealerOps);
-  } catch (err) {
-    errors.push(`Dealer upsert failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  errors.push(`[INFO] Phase 1 complete — dealers upserted: ${dealerRowMap.size.toLocaleString()} (${((Date.now() - phaseStart) / 1000).toFixed(1)}s elapsed)`);
-  await onProgress?.(
-    Math.round(total * 0.05),
-    total,
-    `Imported ${dealerRowMap.size.toLocaleString()} dealers`,
-  );
+  await bulkWrite(Dealer, ops);
+}
 
-  // Build dealer code → _id lookup
-  const dealersInDB = await Dealer.find(
-    { dealerCode: { $in: [...dealerRowMap.keys()] } },
-    { dealerCode: 1 },
-  ).lean();
-  const dealerIdMap = new Map(dealersInDB.map((d) => [d.dealerCode as string, d._id]));
-
-  // ── 2. Bulk upsert users / customers (5 → 50%) ────────────────────────────
+/** Phase 2: upsert all unique customers found in the rows. */
+export async function upsertCustomers(
+  rows: Record<string, string>[],
+  placeholderHash: string,
+  onBatch?: (done: number, total: number) => Promise<void>,
+): Promise<void> {
   const userRowMap = new Map<string, Record<string, string>>();
   for (const row of rows) {
     const email = rowEmail(row);
     if (!userRowMap.has(email)) userRowMap.set(email, row);
   }
 
-  const userOps = [...userRowMap.entries()].map(([email, row]) => {
+  const ops = [...userRowMap.entries()].map(([email, row]) => {
     const fullName = `${row.owner_first_name?.trim() ?? ""} ${row.owner_last_name?.trim() ?? ""}`.trim();
     return {
       updateOne: {
@@ -276,22 +212,26 @@ export async function importContracts(
     };
   });
 
-  try {
-    await bulkWrite(User, userOps, async (done, totalOps) => {
-      await onProgress?.(
-        Math.round(total * (0.05 + (done / totalOps) * 0.45)),
-        total,
-        `Importing customers: ${done.toLocaleString()} / ${totalOps.toLocaleString()}`,
-      );
-    });
-  } catch (err) {
-    errors.push(`User upsert failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  errors.push(`[INFO] Phase 2 complete — customers upserted: ${userRowMap.size.toLocaleString()} (${((Date.now() - phaseStart) / 1000).toFixed(1)}s elapsed)`);
+  await bulkWrite(User, ops, onBatch);
+}
 
-  // Build email → _id lookup — run PARALLEL find queries concurrently
-  const userIdMap = new Map<string, unknown>();
-  const allEmails = [...userRowMap.keys()];
+/**
+ * Phase 3: upsert all contracts.
+ * Rebuilds the dealer and customer ID maps from the DB (no in-memory state
+ * needed from previous phases — safe to call independently in a separate step).
+ */
+export async function upsertContracts(
+  rows: Record<string, string>[],
+  onBatch?: (done: number, total: number) => Promise<void>,
+): Promise<{ imported: number; errors: string[] }> {
+  // Rebuild dealer ID map
+  const dealerCodes = [...new Set(rows.map((r) => r.dealer_code?.trim()).filter(Boolean))];
+  const dealersInDB = await Dealer.find({ dealerCode: { $in: dealerCodes } }, { dealerCode: 1 }).lean();
+  const dealerIdMap = new Map(dealersInDB.map((d) => [d.dealerCode as string, d._id]));
+
+  // Rebuild customer ID map (batched parallel queries)
+  const allEmails   = [...new Set(rows.map(rowEmail))];
+  const userIdMap   = new Map<string, unknown>();
   const emailBatches: string[][] = [];
   for (let i = 0; i < allEmails.length; i += 5000) {
     emailBatches.push(allEmails.slice(i, i + 5000));
@@ -307,8 +247,7 @@ export async function importContracts(
     }
   }
 
-  // ── 3. Bulk upsert contracts (50 → 100%) ──────────────────────────────────
-  const contractOps = rows.map((row) => {
+  const ops = rows.map((row) => {
     const code        = row.dealer_code?.trim();
     const email       = rowEmail(row);
     const agId        = agreementId(row);
@@ -335,8 +274,8 @@ export async function importContracts(
             ...(row.beginning_mileage?.trim() && { beginMileage: parseInt(row.beginning_mileage, 10) || undefined }),
             ...(row.coverage_miles?.trim()    && { maxMileage:   parseInt(row.coverage_miles, 10)    || undefined }),
             ...(row.deductible?.trim()        && { deductible:   parseFloat(row.deductible)          || 0 }),
-            ...(row.sales_price?.trim()       && { salePrice:    parseFloat(row.sales_price)          || undefined }),
-            ...(row.internal_cost?.trim()     && { internalCost: parseFloat(row.internal_cost)        || undefined }),
+            ...(row.sales_price?.trim()       && { salePrice:    parseFloat(row.sales_price)         || undefined }),
+            ...(row.internal_cost?.trim()     && { internalCost: parseFloat(row.internal_cost)       || undefined }),
           },
           $setOnInsert: { homeKit: false },
         },
@@ -345,25 +284,54 @@ export async function importContracts(
     };
   });
 
-  try {
-    await bulkWrite(Contract, contractOps, async (done, totalOps) => {
-      await onProgress?.(
-        Math.round(total * (0.50 + (done / totalOps) * 0.50)),
-        total,
-        `Importing contracts: ${done.toLocaleString()} / ${totalOps.toLocaleString()}`,
-      );
-    });
-  } catch (err) {
-    errors.push(`Contract upsert failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  errors.push(`[INFO] Phase 3 complete — contracts upserted: ${contractOps.length.toLocaleString()} (${((Date.now() - phaseStart) / 1000).toFixed(1)}s elapsed)`);
+  await bulkWrite(Contract, ops, onBatch);
 
-  const imported = new Set(rows.map(agreementId)).size;
+  return { imported: new Set(rows.map(agreementId)).size, errors: [] };
+}
+
+// ── Legacy all-in-one entry point (SSE path / other callers) ─────────────────
+
+export async function importContracts(
+  rows: Record<string, string>[],
+  onProgress?: ProgressFn,
+): Promise<ImportResult> {
+  if (rows.length === 0) return { recordsTotal: 0, recordsImported: 0 };
+  const total = rows.length;
+
+  const validationError = validateContractColumns(rows);
+  if (validationError) {
+    return { recordsTotal: total, recordsImported: 0, errors: [validationError] };
+  }
+
+  const placeholderHash = await bcrypt.hash("zaktek-import-placeholder", 4);
+
+  // Phase 1: dealers (0 → 5%)
+  await upsertDealers(rows);
+  await onProgress?.(Math.round(total * 0.05), total, "Dealers imported");
+
+  // Phase 2: customers (5 → 50%)
+  await upsertCustomers(rows, placeholderHash, async (done, totalOps) => {
+    await onProgress?.(
+      Math.round(total * (0.05 + (done / totalOps) * 0.45)),
+      total,
+      `Importing customers: ${done.toLocaleString()} / ${totalOps.toLocaleString()}`,
+    );
+  });
+
+  // Phase 3: contracts (50 → 100%)
+  const result = await upsertContracts(rows, async (done, totalOps) => {
+    await onProgress?.(
+      Math.round(total * (0.50 + (done / totalOps) * 0.50)),
+      total,
+      `Importing contracts: ${done.toLocaleString()} / ${totalOps.toLocaleString()}`,
+    );
+  });
+
   await onProgress?.(total, total, "Import complete");
 
   return {
-    recordsTotal:    rows.length,
-    recordsImported: imported,
-    errors:          errors.length > 0 ? errors : undefined,
+    recordsTotal:    total,
+    recordsImported: result.imported,
+    errors:          result.errors.length > 0 ? result.errors : undefined,
   };
 }

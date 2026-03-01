@@ -47,6 +47,22 @@ export async function GET(
     );
   }
 
+  // Contracts are processed by Inngest in the background.
+  // Send a single "done" event so the client closes the EventSource and
+  // switches to its 5-second DB-polling fallback automatically.
+  if (importFile.fileType === "contracts") {
+    const encoder = new TextEncoder();
+    return new Response(
+      encoder.encode('data: {"type":"done","background":true}\n\n'),
+      {
+        headers: {
+          "Content-Type":  "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+        },
+      },
+    );
+  }
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({

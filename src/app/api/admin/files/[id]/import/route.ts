@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { connectDB } from "@/lib/mongodb";
 import ImportFile from "@/models/ImportFile";
+import { inngest } from "@/inngest/client";
 
 export const maxDuration = 300;
 
@@ -23,7 +24,6 @@ export async function POST(
   }
 
   // Chunked uploads don't retain file data after the initial import.
-  // The user must re-upload the file to import it again.
   if (!importFile.fileData && importFile.storagePath?.startsWith("mongodb-chunk:")) {
     return NextResponse.json(
       { error: "Re-import is not available for this file — please upload it again." },
@@ -31,13 +31,30 @@ export async function POST(
     );
   }
 
-  // Reset status so the SSE stream route can pick it up immediately.
-  importFile.status = "pending";
+  if (importFile.fileType === "contracts") {
+    // Contracts are processed by Inngest in the background — no Vercel timeout.
+    // The client will fall back to 5-second DB polling for progress updates.
+    importFile.status        = "processing";
+    importFile.processedRows = 0;
+    importFile.statusMessage = "Queued…";
+    await importFile.save();
+
+    await inngest.send({
+      name: "import/requested",
+      data: { fileId: String(importFile._id) },
+    });
+
+    return NextResponse.json(
+      { processing: true, fileId: String(importFile._id) },
+      { status: 202 },
+    );
+  }
+
+  // All other file types use the existing SSE stream route.
+  importFile.status        = "pending";
   importFile.processedRows = 0;
   await importFile.save();
 
-  // Return the fileId. The client opens GET /api/admin/files/[id]/import/stream
-  // which runs the actual import and streams live progress events.
   return NextResponse.json(
     { processing: true, fileId: String(importFile._id) },
     { status: 202 },
