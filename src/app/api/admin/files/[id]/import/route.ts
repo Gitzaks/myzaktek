@@ -23,17 +23,10 @@ export async function POST(
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 
-  // Chunked uploads don't retain file data after the initial import.
-  if (!importFile.fileData && importFile.storagePath?.startsWith("mongodb-chunk:")) {
-    return NextResponse.json(
-      { error: "Re-import is not available for this file — please upload it again." },
-      { status: 400 },
-    );
-  }
-
   if (importFile.fileType === "contracts") {
-    // Contracts are processed by Inngest in the background — no Vercel timeout.
-    // The client will fall back to 5-second DB polling for progress updates.
+    // Processed by Inngest in the background — no Vercel timeout.
+    // Inngest step 1 will fail gracefully if file data is unavailable.
+    // The client falls back to 5-second DB polling for progress updates.
     importFile.status        = "processing";
     importFile.processedRows = 0;
     importFile.statusMessage = "Queued…";
@@ -50,7 +43,15 @@ export async function POST(
     );
   }
 
-  // All other file types use the existing SSE stream route.
+  // All other file types use the SSE stream route.
+  // Chunked uploads don't retain data after the initial import — block re-imports.
+  if (!importFile.fileData && importFile.storagePath?.startsWith("mongodb-chunk:")) {
+    return NextResponse.json(
+      { error: "Re-import is not available for this file — please upload it again." },
+      { status: 400 },
+    );
+  }
+
   importFile.status        = "pending";
   importFile.processedRows = 0;
   await importFile.save();
