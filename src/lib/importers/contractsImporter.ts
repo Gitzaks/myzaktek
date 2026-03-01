@@ -38,15 +38,32 @@ const COVERAGE_TYPE: Record<string, "exterior" | "interior" | "both"> = {
 };
 
 const BATCH    = 2000; // ops per individual bulkWrite call
-const PARALLEL = 50;   // concurrent bulkWrite calls — match maxPoolSize
+const PARALLEL = 8;    // concurrent bulkWrite calls — keep well below pool size
+                       // to avoid connection saturation stalling Promise.all
+
+const BULK_TIMEOUT_MS = 60_000; // 60 s hard limit per bulkWrite; prevents a
+                                 // single hung Atlas connection from blocking forever
+
+/**
+ * Resolves `p` or rejects with a timeout error after `ms` milliseconds.
+ * Prevents a single hung MongoDB connection from freezing Promise.all forever.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`bulkWrite timed out after ${ms / 1000}s`)), ms),
+    ),
+  ]);
+}
 
 /**
  * Parallel bulk-write helper.
  *
  * Splits `ops` into batches of `batchSize`, then fires up to PARALLEL
- * bulkWrite calls concurrently.  This reduces wall-clock time by ~10x vs
- * sequential — critical for 500 k-row ZAKCNTRCTS files that would otherwise
- * blow the Vercel 300 s function timeout.
+ * bulkWrite calls concurrently.  Keeping PARALLEL low (8) prevents Atlas
+ * connection-pool saturation — the previous value of 50 caused Promise.all
+ * to stall indefinitely once all pool connections were in use and one hung.
  *
  * ordered:false lets MongoDB continue processing a batch even when individual
  * ops fail (duplicate keys, validation errors, etc.).  The driver surfaces
@@ -67,7 +84,10 @@ async function bulkWrite<T>(
   for (let i = 0; i < batches.length; i += PARALLEL) {
     await Promise.all(
       batches.slice(i, i + PARALLEL).map((batch) =>
-        model.bulkWrite(batch, { ordered: false }).catch((err: unknown) => {
+        withTimeout(
+          model.bulkWrite(batch, { ordered: false }),
+          BULK_TIMEOUT_MS,
+        ).catch((err: unknown) => {
           if ((err as { name?: string }).name !== "MongoBulkWriteError") throw err;
         }),
       ),
