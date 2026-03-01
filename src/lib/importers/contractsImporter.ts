@@ -126,7 +126,10 @@ export function validateContractColumns(rows: Record<string, string>[]): string 
 }
 
 /** Phase 1: upsert all unique dealers found in the rows. */
-export async function upsertDealers(rows: Record<string, string>[]): Promise<void> {
+export async function upsertDealers(
+  rows: Record<string, string>[],
+  onBatch?: (done: number, total: number) => Promise<void>,
+): Promise<void> {
   const dealerRowMap = new Map<string, Record<string, string>>();
   for (const row of rows) {
     const code = row.dealer_code?.trim();
@@ -170,7 +173,7 @@ export async function upsertDealers(rows: Record<string, string>[]): Promise<voi
     };
   });
 
-  await bulkWrite(Dealer, ops);
+  await bulkWrite(Dealer, ops, onBatch);
 }
 
 /** Phase 2: upsert all unique customers found in the rows. */

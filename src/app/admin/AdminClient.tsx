@@ -17,9 +17,21 @@ interface ImportFile {
   statusMessage?: string;
   errorMessage?: string;
   importErrors?: string[];
+  /** Inngest contracts import: "dealers" | "customers" | "contracts" */
+  currentStep?: string;
+  /** 0-100 within the current step (resets at each step start) */
+  stepPct?: number;
+  /** Timestamped debug log from Inngest import */
+  debugLog?: string[];
   createdAt: string;
   updatedAt: string;
 }
+
+const STEP_LABEL: Record<string, string> = {
+  dealers:   "Step 1/3 — Dealers",
+  customers: "Step 2/3 — Customers",
+  contracts: "Step 3/3 — Contracts",
+};
 
 interface AutoPointExport {
   _id: string;
@@ -422,6 +434,11 @@ function downloadErrorReport(f: ImportFile) {
   } else {
     lines.push("Row Errors: none");
   }
+  if (f.debugLog && f.debugLog.length > 0) {
+    lines.push("");
+    lines.push(`Debug Log (${f.debugLog.length} entries):`);
+    f.debugLog.forEach((entry) => lines.push(entry));
+  }
   const blob = new Blob([lines.join("\n")], { type: "text/plain" });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
@@ -449,6 +466,7 @@ function FileSection({
   const [uploadProgress, setUploadProgress] = useState("");
   const [selectedFile, setSelectedFile]   = useState<File | null>(null);
   const [showErrorsId, setShowErrorsId]   = useState<string | null>(null);
+  const [showDebugLogId, setShowDebugLogId] = useState<string | null>(null);
   const [error, setError]                 = useState("");
   const [stream, setStream]               = useState<StreamState | null>(null);
   const esRef                             = useRef<EventSource | null>(null);
@@ -632,15 +650,46 @@ function FileSection({
                       {new Date(f.createdAt).toLocaleString()}
                     </td>
                     <td className="px-4 py-2 text-center">
-                      {/* Status text */}
+                      {/* Status text + progress */}
                       {(() => {
+                        // Contracts processed by Inngest use per-step 0-100% progress.
+                        const isInngestContracts =
+                          f.fileType === "contracts" &&
+                          f.status === "processing" &&
+                          !isStreaming;
+
+                        // Overall % for non-Inngest SSE imports
                         const dbPct =
                           !isStreaming &&
                           f.status === "processing" &&
+                          !isInngestContracts &&
                           f.recordsTotal &&
                           f.processedRows != null
                             ? Math.round((f.processedRows / f.recordsTotal) * 100)
                             : null;
+
+                        const stepPct = f.stepPct ?? 0;
+                        const stepLabel = STEP_LABEL[f.currentStep ?? ""] ?? "Processing…";
+
+                        // Which % to show on the progress bar
+                        const barPct = isStreaming
+                          ? stream.pct
+                          : isInngestContracts
+                            ? stepPct
+                            : (dbPct ?? 0);
+
+                        // Status label
+                        const statusText =
+                          f.status === "imported"
+                            ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
+                          : f.status === "import_failed" ? "Import Failed"
+                          : timedOut ? "Timed out — click Import to retry"
+                          : isStreaming ? `Importing… ${stream.pct}%`
+                          : isInngestContracts ? `${stepLabel} (${stepPct}%)`
+                          : f.status === "processing"
+                            ? dbPct != null ? `Processing… ${dbPct}%` : "Processing…"
+                          : "Pending";
+
                         return (
                           <>
                             <span className={
@@ -650,28 +699,18 @@ function FileSection({
                               isStreaming || f.status === "processing" ? "text-blue-600" :
                               "text-gray-400"
                             }>
-                              {f.status === "imported"
-                                ? `Imported (${f.recordsImported ?? 0}${f.recordsTotal != null ? `/${f.recordsTotal}` : ""})`
-                                : f.status === "import_failed" ? "Import Failed"
-                                : timedOut ? "Timed out — click Import to retry"
-                                : isStreaming
-                                  ? `Importing… ${stream.pct}%`
-                                : f.status === "processing"
-                                  ? dbPct != null ? `Processing… ${dbPct}%` : "Processing…"
-                                : "Pending"}
+                              {statusText}
                             </span>
 
-                            {/* Progress bar — live when streaming, DB-backed when polling */}
+                            {/* Progress bar */}
                             {(isStreaming || f.status === "processing") && !timedOut && (
                               <div className="mt-1.5 w-full min-w-[220px]">
                                 <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                                   <div
                                     className={`h-2 rounded-full transition-all duration-300 ${isStreaming ? "bg-[#1565a8]" : "bg-blue-300"}`}
-                                    style={{ width: `${isStreaming ? stream.pct : (dbPct ?? 0)}%` }}
+                                    style={{ width: `${barPct}%` }}
                                   />
                                 </div>
-                                {/* Always show the descriptive message — from SSE when live,
-                                    from the DB-persisted statusMessage when polling. */}
                                 <div className="text-xs text-gray-500 mt-0.5 text-left truncate max-w-[260px]"
                                   title={isStreaming ? stream.message : (f.statusMessage ?? "")}>
                                   {isStreaming
@@ -720,6 +759,33 @@ function FileSection({
                       {showErrorsId === f._id && f.importErrors && (
                         <div className="text-left mt-1 max-h-40 overflow-y-auto bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700 space-y-0.5">
                           {f.importErrors.map((e, idx) => <div key={idx}>{e}</div>)}
+                        </div>
+                      )}
+
+                      {/* Debug log — contracts only, shown during processing or after failure */}
+                      {f.fileType === "contracts" &&
+                        (f.status === "processing" || f.status === "import_failed") &&
+                        f.debugLog && f.debugLog.length > 0 && (
+                        <div className="mt-1.5">
+                          <button
+                            onClick={() => setShowDebugLogId(showDebugLogId === f._id ? null : f._id)}
+                            className="text-xs text-indigo-500 hover:underline font-medium">
+                            {showDebugLogId === f._id ? "Hide" : "Debug Log"} ({f.debugLog.length})
+                          </button>
+                          {showDebugLogId === f._id && (
+                            <div className="mt-1">
+                              <div className="flex justify-end mb-0.5">
+                                <button
+                                  onClick={() => navigator.clipboard.writeText((f.debugLog ?? []).join("\n"))}
+                                  className="text-xs text-blue-500 hover:underline">
+                                  Copy
+                                </button>
+                              </div>
+                              <pre className="text-left text-xs font-mono bg-gray-900 text-green-300 rounded p-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-all">
+                                {(f.debugLog ?? []).join("\n")}
+                              </pre>
+                            </div>
+                          )}
                         </div>
                       )}
                     </td>

@@ -18,6 +18,12 @@ export interface IImportFileDocument extends Document {
   importErrors?: string[];
   storagePath: string;
   fileData?: Buffer;
+  /** Which Inngest step is currently running: "dealers" | "customers" | "contracts" */
+  currentStep?: string;
+  /** 0-100 progress within the current step (resets to 0 at each step start) */
+  stepPct?: number;
+  /** Timestamped debug log entries written throughout the Inngest import */
+  debugLog?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,6 +52,9 @@ const ImportFileSchema = new Schema<IImportFileDocument>(
     importErrors: [{ type: String }],
     storagePath: { type: String, required: true },
     fileData: { type: Buffer },
+    currentStep: { type: String },
+    stepPct: { type: Number },
+    debugLog: [{ type: String }],
   },
   { timestamps: true }
 );
