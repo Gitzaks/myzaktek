@@ -114,6 +114,7 @@ export async function importContracts(
 ): Promise<ImportResult> {
   if (rows.length === 0) return { recordsTotal: 0, recordsImported: 0 };
   const total = rows.length;
+  const phaseStart = Date.now();
 
   const errors: string[] = [];
   const placeholderHash = await bcrypt.hash("zaktek-import-placeholder", 4);
@@ -138,6 +139,17 @@ export async function importContracts(
     const code = row.dealer_code?.trim();
     if (code && !dealerRowMap.has(code)) dealerRowMap.set(code, row);
   }
+
+  // Count unique customers upfront for the diagnostic summary
+  const _customerPreview = new Set<string>();
+  for (const row of rows) _customerPreview.add(rowEmail(row));
+  errors.push(
+    `[INFO] Import started — rows: ${total.toLocaleString()}, ` +
+    `unique dealers: ${dealerRowMap.size.toLocaleString()}, ` +
+    `unique customers: ${_customerPreview.size.toLocaleString()}, ` +
+    `unique contracts: ${new Set(rows.map(agreementId)).size.toLocaleString()}, ` +
+    `columns: [${[...foundKeys].join(", ")}]`,
+  );
 
   // Sanity check: ZAKCNTRCTS should have ~85 unique dealer codes, not thousands.
   // A large count means the dealer_code column is misidentified (e.g. the file
@@ -196,6 +208,7 @@ export async function importContracts(
   } catch (err) {
     errors.push(`Dealer upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  errors.push(`[INFO] Phase 1 complete — dealers upserted: ${dealerRowMap.size.toLocaleString()} (${((Date.now() - phaseStart) / 1000).toFixed(1)}s elapsed)`);
   await onProgress?.(
     Math.round(total * 0.05),
     total,
@@ -254,6 +267,7 @@ export async function importContracts(
   } catch (err) {
     errors.push(`User upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  errors.push(`[INFO] Phase 2 complete — customers upserted: ${userRowMap.size.toLocaleString()} (${((Date.now() - phaseStart) / 1000).toFixed(1)}s elapsed)`);
 
   // Build email → _id lookup — run PARALLEL find queries concurrently
   const userIdMap = new Map<string, unknown>();
@@ -322,9 +336,9 @@ export async function importContracts(
   } catch (err) {
     errors.push(`Contract upsert failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  errors.push(`[INFO] Phase 3 complete — contracts upserted: ${contractOps.length.toLocaleString()} (${((Date.now() - phaseStart) / 1000).toFixed(1)}s elapsed)`);
 
   const imported = new Set(rows.map(agreementId)).size;
-
   await onProgress?.(total, total, "Import complete");
 
   return {
